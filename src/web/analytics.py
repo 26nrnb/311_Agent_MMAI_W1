@@ -8,7 +8,10 @@ the flow traces) and the tickets table:
   filed one, else "answered" (a question answered, a status check, a 911
   redirect, or left). Emergencies (a reply under E1) are also counted apart.
 - Turn latency is resident message to agent reply (input_screen -> reply),
-  the G10 measure in docs/metrics 2.md.
+  the G10 measure in docs/metrics 2.md. For comparing models it is also
+  split by the model that answered the turn, next to the time of each model
+  call alone (inference, plus the network for OpenRouter) and the output
+  tokens per second. Turns the tree answered without a model are "tree".
 - Running cost = model spend (logged per call: OpenRouter returns its price,
   local Ollama calls cost nothing unless an energy rate is set) + hosting
   (prorated by time) + staff time to finish each handoff. It is set against
@@ -34,6 +37,7 @@ from src.config import app_config
 BUCKETS = {"hour": (24, 24 * 31), "day": (30, 366), "month": (12, 36)}
 HOURS_PER_MONTH = 730.0   # 365.25 days * 24 / 12
 LATENCY_TARGET_MS = 10_000   # G10: p95 per agent turn under 10 s
+TREE_ONLY = "tree"            # turn answered by the interaction tree, no model call
 
 DEFAULT_COSTS = {
     "currency": "USD",
@@ -138,6 +142,28 @@ def _pct(values: list[float], p: float) -> int | None:
     return int(round(v[max(0, math.ceil(p / 100 * len(v)) - 1)]))
 
 
+def _speed(speed: dict, label: str) -> dict:
+    return speed.setdefault(label, {"reply": [], "call": [], "tps": [], "tokens_in": 0})
+
+
+def _speed_rows(speed: dict) -> list[dict]:
+    """Per model: reply time per turn, time per model call, output tokens per second."""
+    rows = []
+    for label, sp in speed.items():
+        calls = len(sp["call"])
+        rows.append({
+            "model": label, "replies": len(sp["reply"]), "calls": calls,
+            "reply_p50_ms": _pct(sp["reply"], 50), "reply_p95_ms": _pct(sp["reply"], 95),
+            "reply_max_ms": _pct(sp["reply"], 100),
+            "call_p50_ms": _pct(sp["call"], 50), "call_p95_ms": _pct(sp["call"], 95),
+            "tokens_per_s": round(sorted(sp["tps"])[len(sp["tps"]) // 2], 1) if sp["tps"] else None,
+            "calls_per_reply": round(calls / len(sp["reply"]), 1) if sp["reply"] and label != TREE_ONLY else None,
+            "avg_tokens_in": round(sp["tokens_in"] / calls) if calls else None,
+        })
+    # models first, busiest first; the tree-only baseline last
+    return sorted(rows, key=lambda r: (r["model"] == TREE_ONLY, -r["replies"], -r["calls"]))
+
+
 def summarize(events: list[dict], tickets: list[dict], bucket: str, edges: list[datetime],
               now: datetime, costs: dict) -> dict:
     """Per-period and total usage, latency and cost. edges = window(...)."""
@@ -154,7 +180,9 @@ def summarize(events: list[dict], tickets: list[dict], bucket: str, edges: list[
              "model_cost": 0.0} for s in starts]
     convs: dict[str, dict] = {}
     waiting: dict[str, float] = {}   # interaction -> when its unanswered message arrived
+    turn_models: dict[str, set] = {}   # interaction -> models called since that message
     latencies: list[float] = []
+    speed: dict[str, dict] = {}   # model -> reply, call and tokens/s samples
     models: dict[str, dict] = {}
     rules: Counter = Counter()
     problems = {"model_errors": 0, "tool_failures": 0, "unpriced_calls": 0}
@@ -170,12 +198,18 @@ def summarize(events: list[dict], tickets: list[dict], bucket: str, edges: list[
         if step == "input_screen":
             row["turns"] += 1
             waiting[iid] = ts
+            turn_models[iid] = set()
         elif step == "reply":
             conv["emergency"] |= e.get("rule_id") == "E1"
             if iid in waiting:
-                latencies.append((ts - waiting.pop(iid)) * 1000)
+                ms = (ts - waiting.pop(iid)) * 1000
+                latencies.append(ms)
+                used = turn_models.pop(iid, set())
+                label = used.pop() if len(used) == 1 else "mixed" if used else TREE_ONLY
+                _speed(speed, label)["reply"].append(ms)
         elif step == "model":
             label = e.get("model") or "unknown"
+            turn_models.setdefault(iid, set()).add(label)
             m = models.setdefault(label, {"model": label, "calls": 0, "errors": 0, "tokens_in": 0,
                                           "tokens_out": 0, "cost": 0.0})
             if e.get("outcome") == "error":
@@ -183,6 +217,12 @@ def summarize(events: list[dict], tickets: list[dict], bucket: str, edges: list[
                 problems["model_errors"] += 1
                 continue
             tin, tout = int(e.get("tokens_in") or 0), int(e.get("tokens_out") or 0)
+            if e.get("latency_ms"):
+                sp = _speed(speed, label)
+                sp["call"].append(e["latency_ms"])
+                sp["tokens_in"] += tin
+                if tout:
+                    sp["tps"].append(tout / (e["latency_ms"] / 1000))
             if e.get("cost_usd") is None:
                 problems["unpriced_calls"] += 1
             cost = float(e.get("cost_usd") or 0)
@@ -241,6 +281,7 @@ def summarize(events: list[dict], tickets: list[dict], bucket: str, edges: list[
         "latency": {"turns": len(latencies), "p50_ms": _pct(latencies, 50), "p95_ms": _pct(latencies, 95),
                     "max_ms": _pct(latencies, 100), "target_ms": LATENCY_TARGET_MS},
         "models": sorted(models.values(), key=lambda m: -m["calls"]),
+        "speed": _speed_rows(speed),
         "handoff_rules": [{"rule_id": r, "count": c} for r, c in rules.most_common()],
         "codes": [{"code": c, "count": k} for c, k in Counter(t["code"] for t in tickets).most_common()],
         "problems": problems,

@@ -285,6 +285,15 @@ textarea.prose { flex: 1; min-height: 320px; width: 100%; resize: vertical; padd
   border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.14); white-space: nowrap;
   display: flex; flex-direction: column; gap: 2px;
 }
+.speed { margin-bottom: 12px; }
+.speed .hint { margin: 2px 0 8px; }
+.chart .row-label { fill: var(--text); font-size: 12px; }
+.chart .range { stroke: var(--series-1); stroke-width: 2; stroke-linecap: round; }
+.chart .dot-p50 { fill: var(--series-1); stroke: var(--bg); stroke-width: 2; }
+.chart .dot-p95 { fill: var(--bg); stroke: var(--series-1); stroke-width: 2; }
+.chart .target { stroke: var(--warn); stroke-width: 1; }
+.mark-p50, .mark-p95 { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 2px solid var(--series-1); }
+.mark-p50 { background: var(--series-1); }
 .table-view { margin-top: 6px; font-size: 12px; }
 .table-view summary { color: var(--muted); cursor: pointer; }
 .table-scroll { overflow-x: auto; }

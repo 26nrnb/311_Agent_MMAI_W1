@@ -1184,7 +1184,8 @@
       ollama_per_million_tokens: "Ollama per million tokens",
     };
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    const view = { bucket: store("analytics-bucket") || "day", periods: Number(store("analytics-periods")) || 30 };
+    const view = { bucket: store("analytics-bucket") || "day", periods: Number(store("analytics-periods")) || 30,
+      speed: store("analytics-speed") || "reply" };
     if (!RANGES[view.bucket]) view.bucket = "day";
     let data = null;
     let sig = "";
@@ -1406,6 +1407,82 @@
           data.rows.map((r) => [periodLabel(r.start, true), cur(r.model_cost), cur(r.hosting_cost), cur(r.review_cost), cur(r.total_cost), cur(r.manual_cost)])));
     }
 
+    // ---------- model speed: reply and inference time per model ----------
+    const speedLabel = (m) => (m === "tree" ? "No model (tree answered)" : m === "mixed" ? "More than one model" : m);
+    function speedCard() {
+      const mode = view.speed === "call" ? "call" : "reply";
+      const rows = data.speed.filter((r) => r[`${mode}_p50_ms`] != null);
+      const toggle = h("div", { class: "seg", role: "group", "aria-label": "Time measured" },
+        [["reply", "Whole reply"], ["call", "Model call only"]].map(([k, label]) => h("button", {
+          class: mode === k ? "on" : "", "aria-pressed": String(mode === k),
+          onclick: () => { if (mode !== k) { view.speed = k; store("analytics-speed", k); render(); } },
+        }, label)));
+      const wrap = h("div", { class: "chart speed-chart" });
+      const tipEl = h("div", { class: "chart-tip", role: "status", hidden: true });
+      wrap.append(tipEl);
+      const draw = () => {
+        const W = Math.max(300, wrap.clientWidth || 640);
+        const L = Math.min(240, W * 0.38), R = 72, T = 6, B = 26, ROW = 34;
+        const H = T + B + ROW * Math.max(1, rows.length);
+        const target = data.latency.target_ms;
+        const top = Math.max(1, ...rows.map((r) => r[`${mode}_p95_ms`]), mode === "reply" ? target : 0);
+        const max = niceMax(top / 1000) * 1000;
+        const x = (ms) => L + (ms / max) * (W - L - R);
+        const svg = s("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-hidden": "true" });
+        for (let i = 0; i <= 4; i++) {
+          const v = (max / 4) * i;
+          svg.append(s("line", { x1: x(v), x2: x(v), y1: T, y2: H - B, class: "grid" }),
+            s("text", { x: x(v), y: H - 8, class: "tick", "text-anchor": "middle" }, secs(Math.round(v))));
+        }
+        if (mode === "reply" && target <= max) {
+          svg.append(s("line", { x1: x(target), x2: x(target), y1: T, y2: H - B, class: "target" }),
+            s("text", { x: x(target) + 4, y: T + 10, class: "tick" }, `${secs(target)} target`));
+        }
+        rows.forEach((r, i) => {
+          const cy = T + ROW * i + ROW / 2;
+          const p50 = r[`${mode}_p50_ms`], p95 = r[`${mode}_p95_ms`];
+          const name = speedLabel(r.model);
+          svg.append(s("text", { x: L - 10, y: cy + 4, class: "row-label", "text-anchor": "end" },
+            name.length > 34 ? `${name.slice(0, 33)}…` : name));
+          svg.append(s("line", { x1: x(p50), x2: x(p95), y1: cy, y2: cy, class: "range" }),
+            s("circle", { cx: x(p95), cy, r: 5, class: "dot-p95" }),
+            s("circle", { cx: x(p50), cy, r: 5, class: "dot-p50" }),
+            s("text", { x: x(p95) + 10, y: cy + 4, class: "tick" }, secs(p95)));
+          const hit = s("rect", { x: 0, y: cy - ROW / 2, width: W, height: ROW, fill: "transparent" });
+          hit.addEventListener("mouseenter", () => {
+            fill(tipEl, h("strong", {}, name),
+              h("div", {}, `Reply: median ${secs(r.reply_p50_ms)} · p95 ${secs(r.reply_p95_ms)} · slowest ${secs(r.reply_max_ms)} (${num(r.replies)} replies)`),
+              r.calls ? h("div", {}, `Model call: median ${secs(r.call_p50_ms)} · p95 ${secs(r.call_p95_ms)} (${num(r.calls)} calls)`) : null,
+              r.tokens_per_s != null ? h("div", {}, `${num(r.tokens_per_s)} output tokens/s · ${num(r.calls_per_reply)} calls per reply`) : null);
+            tipEl.hidden = false;
+            tipEl.style.left = `${Math.max(0, Math.min(x(p95) - tipEl.offsetWidth / 2, W - tipEl.offsetWidth))}px`;
+            tipEl.style.top = `${cy + ROW / 2}px`;
+          });
+          hit.addEventListener("mouseleave", () => { tipEl.hidden = true; });
+          svg.append(hit);
+        });
+        wrap.querySelector("svg")?.remove();
+        wrap.prepend(svg);
+      };
+      requestAnimationFrame(draw);
+      wrap._draw = draw;
+      return h("section", { class: "card speed" },
+        h("div", { class: "card-head" }, h("h3", {}, "Model speed"), toggle),
+        h("p", { class: "hint" }, mode === "reply"
+          ? "Resident message to agent reply, including tool calls and every model round trip, grouped by the model that answered."
+          : "One model call alone: inference, plus the internet round trip for OpenRouter."),
+        rows.length ? [h("div", { class: "legend" },
+          h("span", { class: "legend-item" }, h("span", { class: "mark-p50" }), "Median"),
+          h("span", { class: "legend-item" }, h("span", { class: "mark-p95" }), "95th percentile")), wrap]
+          : h("p", { class: "hint" }, "No replies in this period yet."),
+        simpleTable(["Model", "Replies", "Median reply", "p95 reply", "Median call", "p95 call", "Tokens out/s", "Calls per reply", "Avg prompt tokens"],
+          data.speed.map((r) => [h("span", { class: r.model.includes(":") ? "mono" : "" }, speedLabel(r.model)), num(r.replies),
+            secs(r.reply_p50_ms), secs(r.reply_p95_ms), secs(r.call_p50_ms), secs(r.call_p95_ms),
+            r.tokens_per_s == null ? "–" : num(r.tokens_per_s), r.calls_per_reply == null ? "–" : num(r.calls_per_reply),
+            r.avg_tokens_in == null ? "–" : num(r.avg_tokens_in)]), ""),
+        h("p", { class: "hint" }, "For a fair comparison, look at medians over 20 or more replies per model on similar requests. Ollama runs on the team server's GPU; its first call after a pause includes loading the model."));
+    }
+
     function simpleTable(head, rows, empty) {
       if (!rows.length) return h("p", { class: "hint" }, empty);
       return h("div", { class: "table-scroll" }, h("table", { class: "data" },
@@ -1495,7 +1572,7 @@
       if (!data.totals.requests && !data.models.length) {
         fill($("an-body"), tiles(), h("div", { class: "empty-state" }, "No conversations in this period yet. Try a longer range, or chat on the site to see it here."));
       } else {
-        fill($("an-body"), tiles(), h("div", { class: "an-charts" }, requestsCard(), costCard()), breakdown());
+        fill($("an-body"), tiles(), h("div", { class: "an-charts" }, requestsCard(), costCard()), speedCard(), breakdown());
       }
       // Don't redraw the form under someone typing; refresh it only when the saved values change.
       const shown = JSON.stringify([data.costs, data.cost_defaults]);

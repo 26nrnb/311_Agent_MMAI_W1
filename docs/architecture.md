@@ -1,7 +1,10 @@
 # Architecture
 
 How the whole site runs, from a resident's message to the database and back.
-The diagrams are Mermaid: GitHub draws them as pictures.
+The diagrams are Mermaid: GitHub draws them as pictures. A fuller swim-lane
+version (each step, the rules it applies, and how the team changes the
+site) is [architecture_diagram.html](architecture_diagram.html); open it in
+a browser.
 
 ## The whole system
 
@@ -240,6 +243,14 @@ prices each period:
   `costs.labour_rate_per_hour`.
 - **By hand:** each request times `costs.manual_handle_time_s` at the same
   rate, for comparison (metrics doc: 312 s at $35 to $55 an hour).
+
+**Model speed** compares models on the same live traffic: per model, the
+median and 95th percentile of the whole reply (resident message to agent
+reply, the G10 measure), of one model call alone, output tokens per second
+and model calls per reply. A turn counts toward the model that answered it;
+turns the tree answered on its own are shown apart as a baseline. Ollama
+times are local GPU inference; OpenRouter times include the internet round
+trip.
 
 G9 (cost per *successful* intake) also divides by the success rate, which
 only the eval harness measures, so the tab shows cost per request and per

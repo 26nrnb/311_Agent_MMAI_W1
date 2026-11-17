@@ -110,7 +110,8 @@ returned them (policy rule C5).
   searchable by the agent as soon as you save.
 - **Analytics:** requests per hour, day or month (pick the period), split
   into tickets filed, handoffs and the rest; reply time against the 10 s
-  target (G10); tokens and spend per model; why requests were handed off;
+  target (G10); reply and inference time per model, to compare Ollama with
+  a commercial model; tokens and spend per model; why requests were handed off;
   and the running cost (model + hosting + staff time on handoffs) against
   doing the same requests by hand. The cost assumptions (staff rate, handle
   time, hosting) are edited on the same tab and saved to `app.yaml`.
@@ -164,6 +165,7 @@ docs/              interfaces, architecture, decisions, prompt changelog, deploy
 
 - [docs/interfaces.md](docs/interfaces.md): the shared contracts. Changing one needs the affected owner's review.
 - [docs/architecture.md](docs/architecture.md): how a turn flows through the system.
+- [docs/architecture_diagram.html](docs/architecture_diagram.html): the whole site as a swim-lane diagram (open in a browser).
 - [docs/decisions.md](docs/decisions.md): what we chose and why.
 - [docs/deployment.md](docs/deployment.md): running behind Cloudflare Tunnel.
 

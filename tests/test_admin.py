@@ -278,6 +278,12 @@ def test_analytics_counts_requests_outcomes_and_cost(llm, fresh_store):
     assert d["rows"][-1]["requests"] == 3   # all in the current hour
     assert d["latency"]["turns"] == 3 and d["latency"]["p95_ms"] is not None
     assert d["codes"][0]["code"] == "SW-BIN" and d["handoff_rules"][0]["rule_id"] == "E3"
+    # model speed: two replies came from the model, the 911 one from the tree alone
+    speed = {r["model"]: r for r in d["speed"]}
+    model = next(k for k in speed if k != "tree")
+    assert speed[model]["replies"] == 2 and speed[model]["calls"] == 4 and speed[model]["calls_per_reply"] == 2
+    assert speed[model]["call_p50_ms"] == 1 and speed[model]["tokens_per_s"] == 5000   # 5 tokens in 1 ms
+    assert speed["tree"]["replies"] == 1 and speed["tree"]["calls"] == 0 and d["speed"][-1]["model"] == "tree"
     assert isinstance(d["handoff_rules"][0]["text"], str)
     # defaults: $45/h, 312 s per manual request and per handoff review, free hosting and Ollama
     assert t["review_cost"] == pytest.approx(3.9) and t["manual_cost"] == pytest.approx(11.7)

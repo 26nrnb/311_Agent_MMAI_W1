@@ -168,7 +168,10 @@ checks and actions are listed by `GET /api/admin/flow` and documented in
   Outcome: `handoff` if handed off, else `ticket` if one was filed, else
   `answered`. A reply under E1 is also counted as an emergency.
 - Turn latency is `input_screen` to the next `reply` in the same
-  conversation (G10).
+  conversation (G10). `speed` lists, per model label (`ollama:...`,
+  `openrouter:...`; `tree` for turns with no model call, `mixed` for turns
+  that used two), reply and model-call p50/p95, median output tokens per
+  second, calls per reply and average prompt tokens.
 - `app.yaml` `costs` (all optional, defaults in `src/web/analytics.py`):
   `currency`, `labour_rate_per_hour`, `manual_handle_time_s`,
   `review_time_s`, `hosting_per_month`, `ollama_per_million_tokens`.

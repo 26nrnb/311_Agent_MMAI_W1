@@ -100,3 +100,8 @@ alternatives, and why. The report draws on this file directly.
 
 * **Chose:** an Analytics tab computed live from `interaction_events` and `tickets`: requests per hour, day or month with outcome split, reply-time percentiles against G10, tokens and spend per model, handoff reasons, and running cost (model + prorated hosting + staff review of handoffs) against manual cost. Cost assumptions live in a new optional `costs` block in `app.yaml`, edited from the tab; defaults are the metrics doc's 312 s handle time and the midpoint ($45/h) of its $35 to $55 range until G sets the base case.
 * **Why:** the team asked to see volume and running cost at a glance. Reading the event log keeps one source of truth with the Interactions tab, and needs no new tables. Live traffic can't measure intake success, so G9 itself stays with the eval harness.
+
+## D-018 Model speed in Analytics (2026-11-16)
+
+* **Chose:** per-model reply time (whole turn) and model-call time (p50, p95), output tokens per second and calls per reply, from the latency already logged in `interaction_events`. A turn belongs to the model that answered it; tree-only turns are a separate baseline.
+* **Why:** the team wants to compare the local Ollama model with a commercial model on inference time. Live traffic compares them on real requests, but only fairly with enough replies per model (about 20 or more) on similar requests; a side-by-side run on a fixed prompt set would control for that.
