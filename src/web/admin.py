@@ -15,6 +15,8 @@ Set ADMIN_ENABLED=0 in .env to switch the page and this API off.
 - Knowledge base: edit kb_documents; changed documents are re-chunked at once.
 - Analytics: requests per hour, day or month, latency, and the running cost
   against doing the same work by hand (src/web/analytics.py).
+- Re-runs: replay a logged conversation on another model (src/agent/rerun.py)
+  and compare speed, tokens and decisions with the original.
 """
 from __future__ import annotations
 
@@ -23,13 +25,14 @@ import re
 from datetime import datetime, timezone
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from src.agent import flow
+from src.agent import flow, rerun
 from src.agent.orchestrator import render_system_prompt
 from src.config import EDITABLE, app_config, env, files, guardrails_config, policy, reload
 from src.guardrails.masking import mask_obj
+from src.models.llm import LLMError, LLMSelection
 from src.rag.ingest import chunk_stale
 from src.tools.store import StoreError, get_store
 from src.web import analytics as stats
@@ -78,9 +81,24 @@ def _store_call(fn, *args):
 
 # ---------------------------------------------------------------- interactions
 
+def _rerun_of() -> dict[str, str]:
+    """Re-run conversation -> the original it replays."""
+    out = {}
+    for m in _store_call(get_store().rerun_markers, 500):
+        try:
+            out[m["interaction_id"]] = json.loads(m["text"])["of"]
+        except (TypeError, ValueError, KeyError):
+            pass
+    return out
+
+
 @router.get("/interactions")
 def interactions(limit: int = 50):
-    return {"interactions": _store_call(get_store().list_interactions, min(limit, 200))}
+    rows = _store_call(get_store().list_interactions, min(limit, 200))
+    of = _rerun_of()
+    for r in rows:
+        r["rerun_of"] = of.get(r["interaction_id"])
+    return {"interactions": rows}
 
 
 @router.get("/interactions/{interaction_id}")
@@ -365,6 +383,60 @@ def _update(kind: str, ref: str, body: StatusUpdate, statuses: list[str]):
                                    "new_status": body.status if changed else None, "note": note,
                                    "author": body.author})
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- re-runs
+
+class RerunRequest(BaseModel):
+    provider: str
+    model: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/interactions/{interaction_id}/rerun")
+def start_rerun(interaction_id: str, body: RerunRequest, x_openrouter_key: str | None = Header(default=None)):
+    # Like /api/chat: an OpenRouter key comes with the request and is never stored.
+    sel = LLMSelection(provider=body.provider, model=body.model,
+                       api_key=x_openrouter_key if body.provider == "openrouter" else None)
+    try:
+        job = rerun.start(interaction_id, sel)
+    except LLMError as e:
+        raise HTTPException(400, str(e))
+    except rerun.RerunError as e:
+        raise HTTPException(409, str(e))
+    except StoreError as e:
+        raise HTTPException(502, f"database unavailable: {e}")
+    return job.public()
+
+
+@router.get("/reruns/jobs/{job_id}")
+def rerun_job(job_id: str):
+    job = rerun.get(job_id)
+    if job is None:
+        raise HTTPException(404, "no such re-run (the server may have restarted)")
+    return job.public()
+
+
+@router.get("/reruns")
+def reruns(limit: int = 20):
+    """Conversations that were re-run, newest first, each with its runs broken into turns."""
+    store = get_store()
+    groups: dict[str, list[str]] = {}
+    for rid, of in _rerun_of().items():   # newest re-run first
+        groups.setdefault(of, []).append(rid)
+    chosen = list(groups.items())[:max(1, min(limit, 50))]
+    by_id: dict[str, list[dict]] = {}
+    for e in _store_call(store.events_for, [i for of, rs in chosen for i in (of, *rs)]):
+        by_id.setdefault(e["interaction_id"], []).append(e)
+    out = []
+    for of, rs in chosen:
+        if of not in by_id:
+            continue
+        original = stats.run_detail(of, by_id[of])
+        runs = [stats.compare(original, stats.run_detail(r, by_id[r])) for r in reversed(rs) if r in by_id]
+        out.append({"original": of, "first_message": original["turns"][0]["message"] if original["turns"] else None,
+                    "last_run_at": runs[-1]["started_at"] if runs else None, "runs": [original, *runs]})
+    return {"groups": out, "by_model": stats.by_model(out),
+            "jobs": [j.public() for j in rerun._JOBS.values() if j.status == "running"]}
 
 
 # ---------------------------------------------------------------- analytics

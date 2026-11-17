@@ -105,3 +105,8 @@ alternatives, and why. The report draws on this file directly.
 
 * **Chose:** per-model reply time (whole turn) and model-call time (p50, p95), output tokens per second and calls per reply, from the latency already logged in `interaction_events`. A turn belongs to the model that answered it; tree-only turns are a separate baseline.
 * **Why:** the team wants to compare the local Ollama model with a commercial model on inference time. Live traffic compares them on real requests, but only fairly with enough replies per model (about 20 or more) on similar requests; a side-by-side run on a fixed prompt set would control for that.
+
+## D-019 Re-run conversations on another model (2026-11-16)
+
+* **Chose:** a button in /admin > Interactions that replays a logged conversation on a chosen model, and a side-by-side comparison in Analytics (speed, tokens, cost, and each turn's tools, rules and outcome). Writes to City records are simulated in a re-run; duplicate search sees only tickets that existed before the original; re-runs are left out of usage and cost.
+* **Why:** the team wants to compare Ollama with a commercial model on the requests residents actually make, not only on speed. Replaying the masked log keeps raw resident text out of storage (D6), at the cost of stand-in details and follow-up messages written for the original agent; re-running on the original model gives a like-for-like baseline.

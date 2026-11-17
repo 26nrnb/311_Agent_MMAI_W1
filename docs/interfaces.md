@@ -130,6 +130,9 @@ both off). Everything returned about conversations is masked (D6).
 | GET | `/api/admin/handoffs/{ref_id}` | | handoff with transcript, status history |
 | POST | `/api/admin/handoffs/{ref_id}/updates` | `{status?, note?, author?}` | change status (`pending`, `in_review`, `resolved`) and/or add a note |
 | GET | `/api/admin/analytics` | `?bucket=hour\|day\|month&periods=&tz=` | per-period and total requests, outcomes, tokens, latency (p50/p95), costs; by model, handoff rule and code; the cost assumptions |
+| POST | `/api/admin/interactions/{id}/rerun` | `{provider, model}`; header `X-OpenRouter-Key` for OpenRouter | start a re-run (409 if two are running or there is nothing to replay); returns the job |
+| GET | `/api/admin/reruns/jobs/{job_id}` | | job: `status` running/done/failed, `done` of `turns`, `rerun_id`, `error` |
+| GET | `/api/admin/reruns` | `?limit=` | originals with their re-runs, each run split into turns (tools, rules, reply, time, tokens), decisions compared with the original; pooled by model; running jobs |
 | PUT | `/api/admin/costs` | `{costs, author?, note?}` | save cost assumptions into the `costs` block of `app.yaml` (checked; 422 with `errors`) |
 | GET / POST | `/api/admin/kb` | POST `{title, content, source?, active?}` | documents; create |
 | PUT / DELETE | `/api/admin/kb/{id}` | PUT as POST | update; delete |

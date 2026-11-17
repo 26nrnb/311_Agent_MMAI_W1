@@ -13,6 +13,7 @@ from __future__ import annotations
 import itertools
 import re
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
@@ -237,6 +238,25 @@ class SupabaseStore:
             "select": "ticket_id,code,unit,status,location,postal_code,fields,opened_at",
             "ticket_id": f"in.({','.join(ticket_ids)})"})
 
+    # --- re-runs for /admin (src/agent/rerun.py) ---
+    def rerun_markers(self, limit: int = 500) -> list[dict]:
+        return self._req("GET", "interaction_events", params={
+            "select": "interaction_id,model,text,created_at", "step": "eq.rerun",
+            "order": "created_at.desc", "limit": str(limit)})
+
+    def interaction_summaries(self, ids: list[str]) -> list[dict]:
+        if not ids:
+            return []
+        return self._req("GET", "interaction_summaries", params={
+            "select": "*", "interaction_id": f"in.({','.join(ids)})"})
+
+    def events_for(self, ids: list[str]) -> list[dict]:
+        if not ids:
+            return []
+        return self._req("GET", "interaction_events", params={
+            "select": "*", "interaction_id": f"in.({','.join(ids)})",
+            "order": "created_at.asc,event_id.asc", "limit": "20000"})
+
     # --- analytics for /admin ---
     def usage_events(self, since: datetime, until: datetime) -> list[dict]:
         """Events in [since, until) except flow traces, oldest first, fetched a page at a time."""
@@ -449,6 +469,17 @@ class MemoryStore:
     def tickets_by_id(self, ticket_ids: list[str]) -> list[dict]:
         return [t for t in self.tickets if t["ticket_id"] in ticket_ids]
 
+    def rerun_markers(self, limit: int = 500) -> list[dict]:
+        rows = [{k: e.get(k) for k in ("interaction_id", "model", "text", "created_at")}
+                for e in self.events if e["step"] == "rerun"]
+        return list(reversed(rows))[:limit]
+
+    def interaction_summaries(self, ids: list[str]) -> list[dict]:
+        return [r for r in self.list_interactions(10_000) if r["interaction_id"] in ids]
+
+    def events_for(self, ids: list[str]) -> list[dict]:
+        return [e for e in self.events if e["interaction_id"] in ids]
+
     def usage_events(self, since: datetime, until: datetime) -> list[dict]:
         cols = USAGE_COLUMNS.split(",")
         return [{k: e.get(k) for k in cols} for e in self.events
@@ -460,8 +491,25 @@ class MemoryStore:
 
 
 @lru_cache
-def get_store():
+def _default_store():
     url, key = env("SUPABASE_URL"), env("SUPABASE_SERVICE_KEY")
     if env("USE_MEMORY_STORE", "0") == "1" or not (url and key):
         return MemoryStore(config=fixture_files())
     return SupabaseStore(url, key)
+
+
+# A re-run (src/agent/rerun.py) swaps in a store that simulates writes, for
+# its own thread only; everything else keeps using the real one.
+_override: ContextVar = ContextVar("store_override", default=None)
+
+
+def get_store():
+    return _override.get() or _default_store()
+
+
+get_store.cache_clear = _default_store.cache_clear
+
+
+def use_store(store):
+    """Use `store` in the current thread or context. Returns a token for _override.reset()."""
+    return _override.set(store)

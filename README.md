@@ -91,7 +91,9 @@ returned them (policy rule C5).
   and the branch it took, with the tree beside it and the path highlighted.
   Model and tool calls show their arguments and results; tickets and
   handoffs come from the database. Tick *Follow newest* and chat on the
-  main site to watch a conversation live.
+  main site to watch a conversation live. *Re-run with another model*
+  replays the conversation's messages on a model you pick (Ollama or
+  OpenRouter); tickets and handoffs in a re-run are simulated, never filed.
 - **Tickets / Handoffs:** every ticket and handoff, live. Filter by status,
   code or rule, or search; open one to see what was collected, why it was
   handed off, the transcript, and the conversation behind it. Change its
@@ -112,7 +114,9 @@ returned them (policy rule C5).
   into tickets filed, handoffs and the rest; reply time against the 10 s
   target (G10); reply and inference time per model, to compare Ollama with
   a commercial model; tokens and spend per model; why requests were handed off;
-  and the running cost (model + hosting + staff time on handoffs) against
+  re-runs side by side with their originals (speed, tokens, cost, and the
+  tools, rules and outcome of every turn); and the running cost (model +
+  hosting + staff time on handoffs) against
   doing the same requests by hand. The cost assumptions (staff rate, handle
   time, hosting) are edited on the same tab and saved to `app.yaml`.
 

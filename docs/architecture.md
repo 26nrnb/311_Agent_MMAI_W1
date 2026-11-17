@@ -255,3 +255,32 @@ trip.
 G9 (cost per *successful* intake) also divides by the success rate, which
 only the eval harness measures, so the tab shows cost per request and per
 ticket filed instead.
+
+## Re-runs
+
+`/admin` > Interactions > *Re-run with another model* replays a logged
+conversation on another model (`src/agent/rerun.py`) so the team can compare
+models on real requests. Analytics > Model re-runs shows each original and
+its re-runs side by side, turn by turn.
+
+- **What is replayed:** the resident's messages as logged. Logs are masked
+  (D6), so each mask tag gets a fixed stand-in (`[STREET_NUMBER]` becomes
+  `100`, `[PHONE]` becomes `555-0100`); `[REDACTED]` stays. The resident's
+  later messages answered the original agent, so they may not fit a re-run
+  that asked something else. Re-running on the original model gives the
+  like-for-like baseline.
+- **No side effects:** the re-run's thread uses `ReplayStore`, set with a
+  context variable in `src/tools/store.py` so live chats are unaffected.
+  `create_ticket` and `handoff` return simulated IDs from a reserved range
+  (`311-YYYY-9xxxxx`, `HO-YYYY-9xxxxx`) and write nothing; `search_tickets`
+  only sees tickets opened before the original conversation, so the
+  original's own ticket doesn't turn up as a duplicate. Status lookups, the
+  knowledge base, config and the event log are live.
+- **Marking:** the re-run's first event is `rerun` with `{"of": original,
+  "model": label}`. Analytics leaves re-runs out of usage and cost.
+- **Comparing decisions:** a turn "took the same decisions" when it called
+  the same tools in the same order and fired the same rules as the
+  original's turn.
+- At most two re-runs run at once (the GPU also serves the live site). An
+  OpenRouter key comes with the request, lives only in that job while it
+  runs, and is never stored or logged.

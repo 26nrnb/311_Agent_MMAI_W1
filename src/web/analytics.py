@@ -18,6 +18,10 @@ the flow traces) and the tickets table:
   what the same requests would cost by hand. G9 also divides by the intake
   success rate, which only the eval harness can measure, so it isn't here.
 
+Re-runs (a logged conversation replayed on another model, src/agent/rerun.py)
+are test traffic: they are left out of usage and cost, and compared with
+their originals by run_detail() / compare() at the end of this file.
+
 The assumptions are the `costs:` block in app.yaml, edited from the
 Analytics tab (or the Files tab). DEFAULT_COSTS fills any key that's missing.
 """
@@ -187,7 +191,10 @@ def summarize(events: list[dict], tickets: list[dict], bucket: str, edges: list[
     rules: Counter = Counter()
     problems = {"model_errors": 0, "tool_failures": 0, "unpriced_calls": 0}
 
+    tests = rerun_ids(events)
     for e in events:   # oldest first
+        if e["interaction_id"] in tests:
+            continue
         ts = _ts(e["created_at"])
         i = period(ts)
         if i is None:
@@ -286,3 +293,126 @@ def summarize(events: list[dict], tickets: list[dict], bucket: str, edges: list[
         "codes": [{"code": c, "count": k} for c, k in Counter(t["code"] for t in tickets).most_common()],
         "problems": problems,
     }
+
+
+# ---------------------------------------------------------------- re-runs
+# A re-run (src/agent/rerun.py) replays a conversation on another model.
+# Each run is broken into turns: what the resident said, the tools called,
+# the rules that fired, the reply, and how long and how many tokens it took.
+
+def rerun_ids(events: list[dict]) -> set[str]:
+    return {e["interaction_id"] for e in events if e["step"] == "rerun"}
+
+
+def run_detail(interaction_id: str, events: list[dict]) -> dict:
+    turns: list[dict] = []
+    cur = None
+    marker_model = None
+    models: list[str] = []
+    outcome = {"ticket": False, "handoff": False, "emergency": False}
+    handoff_rule = None
+    for e in events:
+        step, rule = e["step"], e.get("rule_id")
+        if step == "rerun":
+            marker_model = e.get("model")
+            continue
+        if step == "input_screen":
+            cur = {"message": e.get("text"), "reply": None, "reply_ms": None, "tools": [], "rules": [],
+                   "calls": 0, "call_ms": 0, "errors": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0,
+                   "_t": _ts(e["created_at"])}
+            turns.append(cur)
+            continue
+        if cur is None:
+            continue
+        ok = e.get("outcome") == "ok"
+        if step == "model":
+            if e.get("model") and e["model"] not in models:
+                models.append(e["model"])
+            if e.get("outcome") == "error":
+                cur["errors"] += 1
+                continue
+            cur["calls"] += 1
+            cur["call_ms"] += int(e.get("latency_ms") or 0)
+            cur["tokens_in"] += int(e.get("tokens_in") or 0)
+            cur["tokens_out"] += int(e.get("tokens_out") or 0)
+            cur["cost"] += float(e.get("cost_usd") or 0)
+        elif step.startswith("tool:"):
+            cur["tools"].append({"name": step[5:], "outcome": e.get("outcome")})
+            if step == "tool:create_ticket" and ok:
+                outcome["ticket"] = True
+            if step == "tool:handoff" and ok:
+                outcome["handoff"] = True
+                handoff_rule = handoff_rule or rule
+        elif step == "reply":
+            cur["reply"] = e.get("text")
+            cur["reply_ms"] = round((_ts(e["created_at"]) - cur["_t"]) * 1000)
+            if rule == "E1":
+                outcome["emergency"] = True
+        if rule and step != "model" and rule not in cur["rules"]:
+            cur["rules"].append(rule)
+    for t in turns:
+        t.pop("_t")
+        t["cost"] = round(t["cost"], 6)
+    replies = [t["reply_ms"] for t in turns if t["reply_ms"] is not None]
+    return {
+        "interaction_id": interaction_id,
+        "model": marker_model or (" + ".join(models) if models else "tree"),
+        "rerun": marker_model is not None,
+        "started_at": events[0]["created_at"] if events else None,
+        "outcome": "handoff" if outcome["handoff"] else "ticket" if outcome["ticket"]
+                   else "emergency" if outcome["emergency"] else "answered",
+        "handoff_rule": handoff_rule,
+        "turns": turns,
+        "replies": len(replies),
+        "reply_ms_total": sum(replies),
+        "reply_p50_ms": _pct(replies, 50),
+        "calls": sum(t["calls"] for t in turns),
+        "call_ms_total": sum(t["call_ms"] for t in turns),
+        "errors": sum(t["errors"] for t in turns),
+        "tokens_in": sum(t["tokens_in"] for t in turns),
+        "tokens_out": sum(t["tokens_out"] for t in turns),
+        "cost": round(sum(t["cost"] for t in turns), 6),
+    }
+
+
+def compare(original: dict, run: dict) -> dict:
+    """Which turns took the same decisions as the original: same tools in order and the same rules."""
+    same = []
+    for i, t in enumerate(run["turns"]):
+        o = original["turns"][i] if i < len(original["turns"]) else None
+        tools = o is not None and [x["name"] for x in o["tools"]] == [x["name"] for x in t["tools"]]
+        rules = o is not None and set(o["rules"]) == set(t["rules"])
+        t["same_tools"], t["same_rules"] = tools, rules
+        same.append(tools and rules)
+    run["same_turns"] = sum(same)
+    run["same_outcome"] = run["outcome"] == original["outcome"]
+    return run
+
+
+def by_model(groups: list[dict]) -> list[dict]:
+    """Every run in the comparisons, pooled by model."""
+    pool: dict[str, dict] = {}
+    for g in groups:
+        for r in g["runs"]:
+            p = pool.setdefault(r["model"], {"model": r["model"], "runs": 0, "reruns": 0, "reply_ms": [], "tokens": [],
+                                             "costs": [], "turns": 0, "same_turns": 0, "same_outcome": 0})
+            p["runs"] += 1
+            p["reply_ms"] += [t["reply_ms"] for t in r["turns"] if t["reply_ms"] is not None]
+            p["tokens"] += [t["tokens_in"] + t["tokens_out"] for t in r["turns"] if t["reply_ms"] is not None]
+            p["costs"].append(r["cost"])
+            if r["rerun"]:
+                p["reruns"] += 1
+                p["turns"] += len(r["turns"])
+                p["same_turns"] += r["same_turns"]
+                p["same_outcome"] += r["same_outcome"]
+    out = []
+    for p in pool.values():
+        out.append({
+            "model": p["model"], "runs": p["runs"], "reruns": p["reruns"], "replies": len(p["reply_ms"]),
+            "reply_p50_ms": _pct(p["reply_ms"], 50), "reply_p95_ms": _pct(p["reply_ms"], 95),
+            "tokens_per_reply": round(sum(p["tokens"]) / len(p["tokens"])) if p["tokens"] else None,
+            "cost_per_run": round(sum(p["costs"]) / len(p["costs"]), 6) if p["costs"] else None,
+            "same_turn_rate": p["same_turns"] / p["turns"] if p["turns"] else None,
+            "same_outcome_rate": p["same_outcome"] / p["reruns"] if p["reruns"] else None,
+        })
+    return sorted(out, key=lambda m: -m["runs"])

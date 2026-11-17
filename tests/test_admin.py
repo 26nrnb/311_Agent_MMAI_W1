@@ -335,3 +335,69 @@ def test_analytics_periods_follow_local_time():
     d = stats.summarize(events, [], "day", edges, now, stats.DEFAULT_COSTS)
     assert [r["requests"] for r in d["rows"]] == [1, 0, 1]
     assert d["latency"]["p50_ms"] == 2000
+
+
+# ---------------------------------------------------------------- re-runs
+
+def _rerun(iid, model="other", provider="ollama", **headers):
+    from src.agent import rerun
+    r = client.post(f"/api/admin/interactions/{iid}/rerun", json={"provider": provider, "model": model}, headers=headers)
+    if r.status_code == 200:
+        rerun.get(r.json()["job_id"]).thread.join(10)
+        return rerun.get(r.json()["job_id"])
+    return r
+
+
+def test_rerun_replays_a_conversation_on_another_model_without_touching_records(llm, fresh_store):
+    llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
+            "address": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+        "Done.")
+    iid = chat("My recycling bin lid is cracked at 12 Oak Street").json()["interaction_id"]
+    assert len(fresh_store.tickets) == 1
+
+    fake = llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+               [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
+               [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
+                   "address": "100 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+               "Filed.")
+    job = _rerun(iid)
+    assert job.status == "done" and job.done == 1 and job.model == "ollama:other", job.error
+    # the masked street number was replaced with a stand-in for the model
+    assert "100 Oak Street" in fake.calls[0][-1]["content"]
+    # nothing written to City records; the original's own ticket wasn't offered as a duplicate
+    assert len(fresh_store.tickets) == 1 and not fresh_store.handoffs
+    evs = client.get(f"/api/admin/interactions/{job.rerun_id}").json()["events"]
+    search = next(e for e in evs if e["step"] == "tool:search_tickets")
+    assert search["data"]["result"]["tickets"] == []   # the original ticket at 12 Oak Street is hidden
+    created = next(e for e in evs if e["step"] == "tool:create_ticket")
+    assert created["data"]["result"]["ticket_id"].endswith("900001")
+
+    listed = {r["interaction_id"]: r for r in client.get("/api/admin/interactions").json()["interactions"]}
+    assert listed[job.rerun_id]["rerun_of"] == iid and listed[iid]["rerun_of"] is None
+
+    d = client.get("/api/admin/reruns").json()
+    g = d["groups"][0]
+    assert g["original"] == iid and [r["model"] for r in g["runs"]] == ["ollama:m", "ollama:other"]
+    orig, run = g["runs"]
+    assert not orig["rerun"] and run["rerun"] and run["outcome"] == orig["outcome"] == "ticket"
+    assert [t["name"] for t in run["turns"][0]["tools"]] == ["policy_lookup", "search_tickets", "create_ticket"]
+    assert run["turns"][0]["same_tools"] is False and run["same_turns"] == 0 and run["same_outcome"]
+    assert run["calls"] == 4 and run["tokens_in"] == 40 and run["turns"][0]["reply"] == "Filed."
+    assert {m["model"] for m in d["by_model"]} == {"ollama:m", "ollama:other"}
+
+    # test traffic stays out of usage and cost
+    t = client.get("/api/admin/analytics", params={"bucket": "hour", "periods": 2}).json()["totals"]
+    assert t["requests"] == 1 and t["model_calls"] == 3
+
+    # re-running the re-run replays the original
+    llm("Hello again.")
+    again = _rerun(job.rerun_id, model="third")
+    assert again.original == iid and again.status == "done"
+
+
+def test_rerun_refuses_bad_requests(llm, fresh_store):
+    llm("Hi.")
+    iid = chat("hello").json()["interaction_id"]
+    assert _rerun(iid, provider="openrouter", model="x/y").status_code == 400    # no key
+    assert _rerun("no-such-conversation").status_code == 409

@@ -264,6 +264,7 @@
           live ? h("span", { class: "dot live", title: "active in the last 2 minutes" }) : null,
           h("span", {}, ago(r.last_at)),
           h("span", {}, `${r.turns} turn${r.turns === 1 ? "" : "s"}`),
+          r.rerun_of ? h("span", { class: "chip accent", title: `re-run of ${r.rerun_of}` }, `re-run · ${(r.models || "").split(", ").pop()}`) : null,
           r.tickets ? h("span", { class: "chip ok" }, "ticket") : null,
           r.handoffs ? h("span", { class: "chip warn" }, "handoff") : null,
           (r.rule_ids || []).slice(0, 6).map((id) => ruleChip(id))));
@@ -305,9 +306,91 @@
     // A new run of the same hook starts at the hook's root node.
     const startsRun = (all, i) => REF.doc.hooks[all[i].data.hook] === all[i].data.node && i > 0 && isFlow(all[i - 1]) && all[i - 1].data.hook === all[i].data.hook;
 
+    // ---------- re-run this conversation on another model ----------
+    // The OpenRouter key lives only in this variable for as long as the page is open.
+    const rerunState = { open: false, provider: null, model: "", key: "", job: null, models: {}, error: null };
+    let rerunTimer = null;
+
+    async function loadModels(provider) {
+      if (rerunState.models[provider]) return;
+      rerunState.models[provider] = [];
+      try {
+        rerunState.models[provider] = (await fetch(`/api/models?provider=${provider}`).then((r) => r.json())).models || [];
+      } catch { /* type the model id instead */ }
+      if (rerunState.open && currentTab === "interactions") render();
+    }
+
+    async function pollJob() {
+      clearTimeout(rerunTimer);
+      const job = rerunState.job;
+      if (!job) return;
+      try {
+        rerunState.job = await api(`/reruns/jobs/${job.job_id}`);
+      } catch (e) {
+        rerunState.job = { ...job, status: "failed", error: e.message };
+      }
+      if (currentTab === "interactions") render();
+      if (rerunState.job.status === "running") rerunTimer = setTimeout(pollJob, 1500);
+    }
+
+    function rerunPanel(original) {
+      const cfg = REF.site || {};
+      const providers = cfg.providers || ["ollama", "openrouter"];
+      const st = rerunState;
+      if (!st.provider) st.provider = cfg.default_provider || providers[0];
+      loadModels(st.provider);
+      const job = st.job && st.job.original === original ? st.job : null;
+      const listId = `rerun-models-${st.provider}`;
+      const provider = h("select", { id: "rerun-provider", "aria-label": "Provider", onchange: (e) => { st.provider = e.target.value; st.model = ""; render(); } },
+        providers.map((p) => h("option", { value: p, selected: p === st.provider }, p === "ollama" ? "Ollama (team server)" : "OpenRouter (commercial)")));
+      const model = h("input", {
+        id: "rerun-model", list: listId, value: st.model, placeholder: (cfg.default_models || {})[st.provider] || "model id",
+        "aria-label": "Model", oninput: (e) => { st.model = e.target.value.trim(); },
+      });
+      const key = st.provider === "openrouter" ? h("input", {
+        id: "rerun-key", type: "password", value: st.key, placeholder: "OpenRouter key (kept in this page only)",
+        autocomplete: "off", "aria-label": "OpenRouter key", oninput: (e) => { st.key = e.target.value.trim(); },
+      }) : null;
+      const running = job && job.status === "running";
+      const go = h("button", {
+        class: "btn primary", disabled: running,
+        onclick: async () => {
+          st.error = null;
+          const chosen = st.model || (cfg.default_models || {})[st.provider];
+          const headers = st.provider === "openrouter" && st.key ? { "X-OpenRouter-Key": st.key } : {};
+          try {
+            st.job = await api(`/interactions/${encodeURIComponent(original)}/rerun`, {
+              method: "POST", headers, body: JSON.stringify({ provider: st.provider, model: chosen }),
+            });
+            pollJob();
+          } catch (e) { st.error = e.message; }
+          render();
+        },
+      }, running ? "Re-running…" : "Re-run");
+      let status = null;
+      if (st.error) status = h("p", { class: "hint error-text" }, st.error);
+      else if (job && job.status === "running") status = h("p", { class: "hint" }, `Re-running on ${job.model}: turn ${job.done + 1} of ${job.turns}…`);
+      else if (job && job.status === "failed") status = h("p", { class: "hint error-text" }, `Re-run on ${job.model} stopped after ${job.done} of ${job.turns} turns: ${job.error}`);
+      else if (job && job.status === "done") {
+        status = h("div", { class: "ed-actions" },
+          h("span", { class: "hint" }, `Done: ${job.turns} turn${job.turns === 1 ? "" : "s"} on ${job.model}.`),
+          h("button", { class: "btn small", onclick: () => analytics.openCompare(original) }, "Compare in Analytics"),
+          h("button", { class: "btn small", onclick: () => { $("follow").checked = false; select(job.rerun_id); } }, "Open the re-run"));
+      }
+      return h("div", { class: "rerun-panel" },
+        h("div", { class: "ed-actions" }, provider, model, key, go,
+          h("button", { class: "btn small", onclick: () => { st.open = false; render(); } }, "Close")),
+        h("datalist", { id: listId }, (st.models[st.provider] || []).map((m) => h("option", { value: m.id }, m.name))),
+        h("p", { class: "hint" }, "Replays the resident's messages on the chosen model, as logged (masked), with stand-ins for the masked details. Tickets and handoffs are simulated, never written. For a like-for-like comparison, re-run on the original model too."),
+        status);
+    }
+
     function render() {
       const all = evs();
       if (cursor != null && cursor >= all.length) cursor = all.length - 1;
+      const marker = all.find((e) => e.step === "rerun");
+      let rerunOf = null;
+      try { rerunOf = marker ? JSON.parse(marker.text).of : null; } catch { /* not a re-run */ }
       const models = [...new Set(all.map((e) => e.model).filter(Boolean))];
       const tokens = all.reduce((n, e) => n + (e.tokens_in || 0) + (e.tokens_out || 0), 0);
       const cost = all.reduce((n, e) => n + Number(e.cost_usd || 0), 0);
@@ -317,7 +400,15 @@
         h("h2", {}, "Conversation"),
         h("span", { class: "meta mono" }, detail.interaction_id),
         h("span", { class: "meta" }, `${clock(all[0] && all[0].created_at)} · ${all.length} steps · ${decisions} decisions · ${tokens} tokens${cost ? ` · $${cost.toFixed(4)}` : ""}`),
-        h("span", { class: "meta" }, models.join(", ")));
+        h("span", { class: "meta" }, models.join(", ")),
+        h("span", { class: "spacer" }),
+        all.some((e) => e.step === "input_screen")
+          ? h("button", { class: "btn small", onclick: () => { rerunState.open = !rerunState.open; render(); } }, "Re-run with another model")
+          : null);
+      const banner = rerunOf ? h("div", { class: "rerun-banner" },
+        h("span", {}, `Re-run on ${marker.model} of an earlier conversation. Tickets and handoffs here were simulated.`),
+        h("button", { class: "btn small", onclick: () => select(rerunOf) }, "Open the original"),
+        h("button", { class: "btn small", onclick: () => analytics.openCompare(rerunOf) }, "Compare in Analytics")) : null;
 
       const controls = h("div", { class: "controls" },
         h("button", { class: "btn", onclick: () => step(-1), disabled: cursor === 0 || !all.length, title: "Previous step (←)" }, "← Prev"),
@@ -348,7 +439,7 @@
         detail.tickets.map(ticketCard),
         detail.handoffs.map(handoffCard));
 
-      fill($("int-detail"), head, controls,
+      fill($("int-detail"), head, banner, rerunState.open ? rerunPanel(rerunOf || detail.interaction_id) : null, controls,
         h("div", { class: "walk" }, h("div", { class: "walk-main" }, timeline, records), logicPanel()));
     }
 
@@ -419,6 +510,7 @@
 
     function eventCard(e, i) {
       const cls = cursor == null ? "" : i === cursor ? "current" : i > cursor ? "future" : "";
+      if (e.step === "rerun") return h("div", { class: `ev note ${cls}`, "data-i": i }, `Re-run started on ${e.model}`);
       const id = e.event_id || String(i);
       const pick = () => { cursor = i; render(); };
 
@@ -1191,6 +1283,7 @@
     let sig = "";
     let costsShown = "";
     let costsSaved = "";   // survives the form redrawing with the saved values
+    let scrollToReruns = false;
     const poll = poller(load, 30000);
 
     // ---------- formatting ----------
@@ -1249,7 +1342,8 @@
 
     async function load() {
       const q = new URLSearchParams({ bucket: view.bucket, periods: String(view.periods), tz });
-      const next = await api(`/analytics?${q}`);
+      const [next, reruns] = await Promise.all([api(`/analytics?${q}`), api("/reruns").catch(() => null)]);
+      next.reruns = reruns;
       $("an-updated").textContent = `updated ${clock(next.generated_at)}`;
       const s = JSON.stringify({ ...next, generated_at: null });
       if (s === sig) return;
@@ -1483,6 +1577,78 @@
         h("p", { class: "hint" }, "For a fair comparison, look at medians over 20 or more replies per model on similar requests. Ollama runs on the team server's GPU; its first call after a pause includes loading the model."));
     }
 
+    // ---------- model re-runs: the same conversation on different models, side by side ----------
+    const OUTCOME_LABEL = { ticket: "Filed a ticket", handoff: "Handed to staff", emergency: "Sent to 911", answered: "Answered" };
+    const outcomeChip = (r) => h("span", { class: `chip ${r.outcome === "ticket" ? "ok" : r.outcome === "answered" ? "" : "warn"}` },
+      OUTCOME_LABEL[r.outcome] || r.outcome, r.handoff_rule ? ` (${r.handoff_rule})` : "");
+
+    function compareTable(group) {
+      const runs = group.runs;
+      const original = runs[0];
+      const differs = (r, same) => (r.rerun && !same ? "differs" : "");
+      const row = (label, cell) => h("tr", {}, h("th", { scope: "row" }, label), runs.map((r) => cell(r)));
+      const turns = Math.max(...runs.map((r) => r.turns.length));
+      const body = [
+        row("Outcome", (r) => h("td", { class: differs(r, r.same_outcome) }, outcomeChip(r))),
+        row("Reply time", (r) => h("td", {}, `${secs(r.reply_ms_total)} total · median ${secs(r.reply_p50_ms)}`)),
+        row("Model calls", (r) => h("td", {}, `${num(r.calls)} calls · ${secs(r.call_ms_total)} inference${r.errors ? ` · ${num(r.errors)} errors` : ""}`)),
+        row("Tokens", (r) => h("td", {}, `${num(r.tokens_in)} in · ${num(r.tokens_out)} out`)),
+        row("Cost", (r) => h("td", {}, money(r.cost, "USD"))),
+        row("Same decisions", (r) => h("td", { class: differs(r, r.same_turns === r.turns.length) },
+          r.rerun ? `${r.same_turns} of ${r.turns.length} turns` : "baseline")),
+      ];
+      for (let i = 0; i < turns; i++) {
+        const message = (runs.find((r) => r.turns[i]) || original).turns[i].message;
+        body.push(h("tr", { class: "turn-row" }, h("th", { colspan: String(runs.length + 1) }, `Turn ${i + 1} · Resident (masked): `, h("span", { class: "turn-msg" }, message || ""))));
+        body.push(row("", (r) => {
+          const t = r.turns[i];
+          if (!t) return h("td", { class: "hint" }, "not reached");
+          const notes = r.rerun ? [!t.same_tools ? "different tools" : null, !t.same_rules ? "different rules" : null].filter(Boolean) : [];
+          return h("td", { class: differs(r, t.same_tools && t.same_rules) },
+            h("div", { class: "cmp-meta" }, `${secs(t.reply_ms)} · ${num(t.calls)} call${t.calls === 1 ? "" : "s"} · ${num(t.tokens_in + t.tokens_out)} tokens`),
+            h("div", { class: "cmp-chips" }, t.tools.length
+              ? t.tools.map((x) => h("span", { class: `chip ${x.outcome === "ok" ? "" : "err"}`, title: x.outcome || "" }, x.name, x.outcome && x.outcome !== "ok" ? ` (${x.outcome})` : ""))
+              : h("span", { class: "hint" }, "no tools")),
+            t.rules.length ? h("div", { class: "cmp-chips" }, t.rules.map((id) => ruleChip(id))) : null,
+            h("div", { class: "cmp-reply" }, t.reply || "(no reply)"),
+            notes.length ? h("div", { class: "cmp-diff" }, notes.join(" · ")) : null);
+        }));
+      }
+      return h("div", { class: "table-scroll" }, h("table", { class: "compare" },
+        h("thead", {}, h("tr", {}, h("th", {}),
+          runs.map((r) => h("th", { scope: "col" },
+            h("div", { class: "cmp-kind" }, r.rerun ? "Re-run" : "Original"),
+            h("div", { class: "mono cmp-model" }, r.model),
+            h("div", { class: "hint" }, ago(r.started_at), " · ",
+              h("button", { class: "linkish", onclick: () => interactions.open(r.interaction_id) }, "open")))))),
+        h("tbody", {}, body)));
+    }
+
+    function rerunsCard() {
+      const rr = data.reruns;
+      const head = h("div", { class: "card-head" }, h("h3", {}, "Model re-runs"),
+        h("span", { class: "hint" }, "Conversations replayed on another model. Not counted in the figures above."));
+      if (!rr) return h("section", { class: "card", id: "an-reruns" }, head, h("p", { class: "hint" }, "Couldn't load the re-runs."));
+      const jobs = rr.jobs.length ? h("p", { class: "hint live-note" },
+        rr.jobs.map((j) => `Re-running on ${j.model}: turn ${Math.min(j.done + 1, j.turns)} of ${j.turns}`).join(" · ")) : null;
+      if (!rr.groups.length) {
+        return h("section", { class: "card", id: "an-reruns" }, head, jobs,
+          h("p", { class: "hint" }, "No re-runs yet. Open a conversation in Interactions and choose Re-run with another model."));
+      }
+      const group = rr.groups.find((g) => g.original === view.group) || rr.groups[0];
+      const picker = h("select", { id: "an-rerun-group", "aria-label": "Conversation to compare", onchange: (e) => { view.group = e.target.value; render(); } },
+        rr.groups.map((g) => h("option", { value: g.original, selected: g === group },
+          `${short(g.first_message || "(no message)", 70)} · ${g.runs.length} runs`)));
+      return h("section", { class: "card", id: "an-reruns" }, head, jobs,
+        h("h4", { class: "sub-h" }, "By model, across every compared conversation"),
+        simpleTable(["Model", "Runs", "Re-runs", "Median reply", "p95 reply", "Tokens per reply", "Cost per run", "Same decisions", "Same outcome"],
+          rr.by_model.map((m) => [h("span", { class: "mono" }, m.model), num(m.runs), num(m.reruns), secs(m.reply_p50_ms), secs(m.reply_p95_ms),
+            m.tokens_per_reply == null ? "–" : num(m.tokens_per_reply), money(m.cost_per_run, "USD"), pct(m.same_turn_rate), pct(m.same_outcome_rate)]), ""),
+        h("p", { class: "hint" }, "Same decisions: turns where a re-run called the same tools in the same order and fired the same rules as its original."),
+        h("div", { class: "compare-head" }, h("h4", { class: "sub-h" }, "Side by side"), picker),
+        compareTable(group));
+    }
+
     function simpleTable(head, rows, empty) {
       if (!rows.length) return h("p", { class: "hint" }, empty);
       return h("div", { class: "table-scroll" }, h("table", { class: "data" },
@@ -1570,9 +1736,13 @@
 
     function render() {
       if (!data.totals.requests && !data.models.length) {
-        fill($("an-body"), tiles(), h("div", { class: "empty-state" }, "No conversations in this period yet. Try a longer range, or chat on the site to see it here."));
+        fill($("an-body"), tiles(), h("div", { class: "empty-state" }, "No conversations in this period yet. Try a longer range, or chat on the site to see it here."), rerunsCard());
       } else {
-        fill($("an-body"), tiles(), h("div", { class: "an-charts" }, requestsCard(), costCard()), speedCard(), breakdown());
+        fill($("an-body"), tiles(), h("div", { class: "an-charts" }, requestsCard(), costCard()), speedCard(), rerunsCard(), breakdown());
+      }
+      if (scrollToReruns && $("an-reruns")) {
+        scrollToReruns = false;
+        $("an-reruns").scrollIntoView({ block: "start" });
       }
       // Don't redraw the form under someone typing; refresh it only when the saved values change.
       const shown = JSON.stringify([data.costs, data.cost_defaults]);
@@ -1585,6 +1755,13 @@
     return {
       start() { toolbar(); sig = ""; poll.start(); },
       stop() { poll.stop(); },
+      openCompare(original) {
+        view.group = original;
+        scrollToReruns = true;
+        sig = "";
+        if (currentTab !== "analytics") showTab("analytics");
+        else poll.now();
+      },
     };
   })();
 
@@ -1592,6 +1769,7 @@
   (async () => {
     try {
       const cfg = await fetch("/api/config").then((r) => r.json());
+      REF.site = cfg;
       $("site-title").textContent = cfg.site.title;
       document.title = `${cfg.site.title} · Admin`;
       await loadRef();
