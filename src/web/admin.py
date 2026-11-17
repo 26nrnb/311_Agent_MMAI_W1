@@ -13,11 +13,14 @@ Set ADMIN_ENABLED=0 in .env to switch the page and this API off.
 - Tickets and handoffs: live lists, detail, status changes and notes
   (kept in record_updates), each linked to the conversation behind it.
 - Knowledge base: edit kb_documents; changed documents are re-chunked at once.
+- Analytics: requests per hour, day or month, latency, and the running cost
+  against doing the same work by hand (src/web/analytics.py).
 """
 from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +32,7 @@ from src.config import EDITABLE, app_config, env, files, guardrails_config, poli
 from src.guardrails.masking import mask_obj
 from src.rag.ingest import chunk_stale
 from src.tools.store import StoreError, get_store
+from src.web import analytics as stats
 
 MAX_FILE_CHARS = 200_000
 
@@ -172,6 +176,8 @@ def check_config(path: str, content: str) -> list[str]:
     unknown = set(app["llm"].get("providers") or []) - {"ollama", "openrouter"}
     if unknown:
         errors.append(f"app.yaml: llm.providers can only be ollama and openrouter, not {', '.join(sorted(unknown))}")
+    if "costs" in app:
+        errors += stats.check_costs(app["costs"])
     if not errors:
         errors += [f"flow.yaml: {e}" for e in flow.validate(parsed["flow.yaml"], pol, guards)]
 
@@ -359,6 +365,54 @@ def _update(kind: str, ref: str, body: StatusUpdate, statuses: list[str]):
                                    "new_status": body.status if changed else None, "note": note,
                                    "author": body.author})
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- analytics
+
+class CostSave(BaseModel):
+    costs: dict
+    author: str | None = Field(default=None, max_length=80)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.get("/analytics")
+def analytics(bucket: str = "day", periods: int | None = None, tz: str = "UTC"):
+    if bucket not in stats.BUCKETS:
+        raise HTTPException(422, {"errors": [f"bucket must be one of {', '.join(stats.BUCKETS)}"]})
+    default, most = stats.BUCKETS[bucket]
+    periods = max(1, min(periods or default, most))
+    zone = stats.zone(tz)
+    now = datetime.now(timezone.utc)
+    edges = stats.window(bucket, periods, zone, now)
+    store = get_store()
+    events = _store_call(store.usage_events, edges[0], edges[-1])
+    tickets = _store_call(store.usage_tickets, edges[0], edges[-1])
+    costs = stats.cost_settings()
+    out = stats.summarize(events, tickets, bucket, edges, now, costs)
+    pol = policy()
+    for r in out["handoff_rules"]:
+        rule = (pol.get("rules") or {}).get(r["rule_id"])
+        r["text"] = rule.get("text") if isinstance(rule, dict) else rule
+    for c in out["codes"]:
+        c["category"] = pol["service_catalogue"].get(c["code"], {}).get("category")
+    configured = app_config().get("costs") or {}
+    out.update({"tz": str(zone), "periods": periods, "max_periods": most, "generated_at": now.isoformat(),
+                "costs": costs, "cost_defaults": sorted(set(stats.DEFAULT_COSTS) - set(configured)),
+                "cost_notes": stats.COST_NOTES})
+    return out
+
+
+@router.put("/costs")
+def save_costs(body: CostSave):
+    errors = stats.check_costs(body.costs)
+    if errors:
+        raise HTTPException(422, {"errors": errors})
+    current = next((r["content"] for r in _store_call(get_store().list_config) if r["path"] == "app.yaml"), None)
+    if current is None:
+        raise HTTPException(404, "app.yaml doesn't exist")
+    _save("app.yaml", stats.with_costs(current, {**stats.cost_settings(), **body.costs}),
+          body.author, body.note or "cost assumptions")
+    return {"ok": True, "costs": stats.cost_settings()}
 
 
 # ---------------------------------------------------------------- knowledge base

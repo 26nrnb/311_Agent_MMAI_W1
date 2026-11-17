@@ -18,6 +18,7 @@
       <button role="tab" data-tab="flow">Flow</button>
       <button role="tab" data-tab="files">Files</button>
       <button role="tab" data-tab="kb">Knowledge base</button>
+      <button role="tab" data-tab="analytics">Analytics</button>
     </nav>
     <div class="bar-right">
       <label class="who"><span>Your name</span><input id="author" maxlength="80" placeholder="for the edit history" autocomplete="off"></label>
@@ -112,6 +113,13 @@
     <div class="detail-pane editor-pane" id="kb-detail">
       <div class="empty-state">Pick a document to edit. The agent can only state facts about City services that come from these documents (rule C5).</div>
     </div>
+  </section>
+
+  <!-- Analytics: usage and running cost, live from the event log -->
+  <section id="tab-analytics" class="tab-panel single" hidden>
+    <div class="an-toolbar" id="an-toolbar"></div>
+    <div id="an-body"><div class="empty-state">Loading…</div></div>
+    <div id="an-costs"></div>
   </section>
 
   <script src="/static/admin.js"></script>

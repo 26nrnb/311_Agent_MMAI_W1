@@ -36,6 +36,15 @@ def store_failure(e: StoreError) -> dict:
 TICKET_COLUMNS = "ticket_id,code,unit,status,location,postal_code,fields,opened_at,interaction_id"
 
 
+# Event columns the analytics tab reads (never the text).
+USAGE_COLUMNS = "interaction_id,step,model,tokens_in,tokens_out,cost_usd,latency_ms,rule_id,outcome,created_at"
+MAX_USAGE_ROWS = 200_000
+
+
+def _utc(ts: datetime) -> str:
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def _search_term(q: str) -> str:
     """A search term safe inside a PostgREST or=(...) filter."""
     return re.sub(r"[^\w\s@.-]", " ", q).strip()[:80]
@@ -228,6 +237,26 @@ class SupabaseStore:
             "select": "ticket_id,code,unit,status,location,postal_code,fields,opened_at",
             "ticket_id": f"in.({','.join(ticket_ids)})"})
 
+    # --- analytics for /admin ---
+    def usage_events(self, since: datetime, until: datetime) -> list[dict]:
+        """Events in [since, until) except flow traces, oldest first, fetched a page at a time."""
+        out, page = [], 1000
+        while len(out) < MAX_USAGE_ROWS:
+            rows = self._req("GET", "interaction_events", params=[
+                ("select", USAGE_COLUMNS), ("step", "neq.flow"),
+                ("created_at", f"gte.{_utc(since)}"), ("created_at", f"lt.{_utc(until)}"),
+                ("order", "created_at.asc,event_id.asc"), ("limit", str(page)), ("offset", str(len(out)))])
+            out += rows
+            if len(rows) < page:
+                break
+        return out
+
+    def usage_tickets(self, since: datetime, until: datetime) -> list[dict]:
+        """Tickets the agent created in [since, until) (seeded tickets have no conversation)."""
+        return self._req("GET", "tickets", params=[
+            ("select", "code,opened_at"), ("interaction_id", "not.is.null"),
+            ("opened_at", f"gte.{_utc(since)}"), ("opened_at", f"lt.{_utc(until)}"), ("limit", "100000")])
+
 
 class MemoryStore:
     """In-memory store with the same methods as SupabaseStore."""
@@ -419,6 +448,15 @@ class MemoryStore:
 
     def tickets_by_id(self, ticket_ids: list[str]) -> list[dict]:
         return [t for t in self.tickets if t["ticket_id"] in ticket_ids]
+
+    def usage_events(self, since: datetime, until: datetime) -> list[dict]:
+        cols = USAGE_COLUMNS.split(",")
+        return [{k: e.get(k) for k in cols} for e in self.events
+                if e["step"] != "flow" and since <= datetime.fromisoformat(e["created_at"]) < until]
+
+    def usage_tickets(self, since: datetime, until: datetime) -> list[dict]:
+        return [{"code": t["code"], "opened_at": t["opened_at"]} for t in self.tickets
+                if t.get("interaction_id") and since <= datetime.fromisoformat(t["opened_at"]) < until]
 
 
 @lru_cache

@@ -108,6 +108,12 @@ returned them (policy rule C5).
   `app.yaml` at it to switch.
 - **Knowledge base:** create, edit, hide or delete documents; they are
   searchable by the agent as soon as you save.
+- **Analytics:** requests per hour, day or month (pick the period), split
+  into tickets filed, handoffs and the rest; reply time against the 10 s
+  target (G10); tokens and spend per model; why requests were handed off;
+  and the running cost (model + hosting + staff time on handoffs) against
+  doing the same requests by hand. The cost assumptions (staff rate, handle
+  time, hosting) are edited on the same tab and saved to `app.yaml`.
 
 All of these live only in Supabase: there is no copy in the repo to go
 stale. The tests use their own fixture (`tests/fixtures/config/`), which

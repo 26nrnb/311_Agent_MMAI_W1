@@ -1,30 +1,131 @@
 # Architecture
 
+How the whole site runs, from a resident's message to the database and back.
+The diagrams are Mermaid: GitHub draws them as pictures.
+
+## The whole system
+
+```mermaid
+flowchart LR
+  subgraph people["People"]
+    resident["Resident<br/>chat page /"]
+    team["Team<br/>/admin"]
+  end
+
+  subgraph cloudflare["Cloudflare"]
+    edge["Edge: HTTPS + cache<br/>311.scurrycat.ca"]
+    tunnel["Tunnel home-docker"]
+  end
+
+  subgraph host["Team server 192.168.1.149"]
+    cloudflared["cloudflared<br/>(Windows service)"]
+    ollama["Ollama :11434<br/>local models on the GPU"]
+    subgraph container["Docker container gilead-311, 127.0.0.1:8311"]
+      server["FastAPI server.py<br/>pages, /api/chat, /api/health"]
+      admin["Admin API admin.py<br/>+ analytics.py"]
+      orch["Orchestrator<br/>agent/orchestrator.py"]
+      flow["Interaction tree engine<br/>agent/flow.py"]
+      guards["Guardrails<br/>input screen, masking, output check"]
+      tools["Tools<br/>classifier, policy_lookup, search_tickets,<br/>create_ticket, get_status, handoff, kb_search"]
+      llm["LLM client<br/>models/llm.py"]
+      config["Config cache<br/>config.py"]
+      sync["Sync thread<br/>rag/ingest.py"]
+    end
+  end
+
+  openrouter["OpenRouter<br/>resident's own key, per request"]
+
+  subgraph supabase["Supabase: Postgres + pgvector"]
+    cfgdb[("config_files<br/>config_revisions")]
+    records[("tickets, handoffs<br/>record_updates")]
+    events[("interaction_events")]
+    kbdb[("kb_documents<br/>kb_chunks")]
+  end
+
+  resident --> edge
+  team --> edge
+  edge --> tunnel --> cloudflared --> server
+  server --> orch
+  server --> admin
+  orch --> guards
+  orch --> flow
+  orch --> tools
+  orch --> llm
+  llm --> ollama
+  llm --> openrouter
+  tools --> records
+  tools --> kbdb
+  orch -- "every step, masked" --> events
+  config -- "load, reload on save" --> cfgdb
+  orch -. "reads" .-> config
+  flow -. "reads flow.yaml" .-> config
+  admin -- "walkthrough, tracking,<br/>analytics" --> events
+  admin -- "status changes, notes" --> records
+  admin -- "edits, checked first" --> cfgdb
+  admin -- "edits" --> kbdb
+  sync -- "re-chunk changed docs" --> kbdb
+  sync -- "refresh" --> config
 ```
- Browser                                   Local server (this repo)                         Cloud
- ───────                                   ────────────────────────                         ─────
- chat page  /  /admin   HTTPS via          src/web/server.py (FastAPI, 127.0.0.1:8311)
-  - model picker   ──► Cloudflare ──────►   │
-  - OpenRouter key      Tunnel             src/agent/orchestrator.py ── src/agent/flow.py
-    (page memory only)                       runs the interaction tree      (engine: checks,
-                                             (flow.yaml) at every hook       actions, trace)
-                                             model <-> tools loop ───────────────► src/models/llm.py
-                                                                                    ├─ Ollama (local)
-                                                                                    └─ OpenRouter (user's key)
-                                             every step and tree node -> interaction_events (masked, D6)
-                                                    │
-                                             src/config.py ── all config ────────┐
-                                             src/tools/ ── policy_lookup         │
-                                                         ── classifier           │
-                                                         ── search/create/       ▼
-                                                            get_status/handoff ─► Supabase (Postgres + pgvector)
-                                                         ── kb_search ──────────►  config_files (+ revisions):
-                                                                                     app, policy, guardrails,
-                                                                                     flow, prompts
-                                                                                   tickets, handoffs,
-                                                                                   interaction_events,
-                                                                                   kb_documents, kb_chunks
+
+What runs where:
+
+| Piece | Where | Notes |
+|---|---|---|
+| Pages and API | Docker container on the team server | `docker compose up -d --build`; published on `127.0.0.1:8311` only |
+| Public address | Cloudflare | `311.scurrycat.ca` is a route on the existing `home-docker` tunnel; no router ports open |
+| Local models | Ollama on the host, outside the container | reached at `host.docker.internal:11434`; up only while the `yick1` session is logged in |
+| Cloud models | OpenRouter | the resident pastes their own key; it lives in the page's memory, travels with each request and is never stored or logged |
+| Everything else | Supabase | config, tickets, handoffs, the event log and the knowledge base; the container keeps no files |
+
+## One chat turn
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Resident's browser
+  participant S as server.py
+  participant O as Orchestrator
+  participant F as Tree (flow.yaml)
+  participant M as Model (Ollama or OpenRouter)
+  participant T as Tools
+  participant DB as Supabase
+
+  B->>S: POST /api/chat (message, model, key if OpenRouter)
+  S->>O: handle_turn
+  O->>O: input screen: redact card numbers and similar (D2)
+  O->>F: message tree: 911 (E1), crisis or abuse handoff (E8, E7)
+  alt the tree ends the turn
+    F-->>O: approved reply or handoff
+  else the model takes over
+    loop at most llm.max_tool_steps times
+      O->>M: system prompt, conversation, 7 tool schemas
+      M-->>O: tool calls, or a reply
+      O->>F: before-tool tree (may block, e.g. A2 look up first)
+      O->>T: run the tool (one retry, F1)
+      T->>DB: read or write tickets, handoffs, knowledge base
+      O->>F: after-tool tree (guidance for the model, or a handoff)
+    end
+    O->>F: reply tree: invented IDs (M3), rule IDs (D8), commitments (C1)
+  end
+  O->>DB: every step and tree node, masked (interaction_events)
+  O-->>S: reply
+  S-->>B: reply and interaction_id
 ```
+
+## How the team changes the site
+
+| /admin tab | Reads | Writes |
+|---|---|---|
+| Interactions | `interaction_events`, `handoffs`, `tickets` | nothing |
+| Tickets, Handoffs | `tickets`, `handoffs`, `record_updates` | status and notes (`record_updates`) |
+| Flow | `flow.yaml` | `flow.yaml`, checked before it goes live |
+| Files | `config_files`, `config_revisions` | any config file, checked first, every version kept |
+| Knowledge base | `kb_documents` | documents; changed ones are re-chunked at once |
+| Analytics | `interaction_events` (no flow traces), `tickets` | the `costs` block of `app.yaml` |
+
+Only code changes need a deploy (`git pull`, `docker compose up -d --build`).
+Policy, prompts, guardrails, the tree, the knowledge base and the cost
+assumptions take effect on the next message.
 
 ## Configuration lives only in Supabase
 
@@ -122,3 +223,24 @@ The knowledge base lives only in Supabase (`kb_documents`). The server's
 sync thread (`src/rag/ingest.py` `start_sync`) re-chunks new and edited rows
 every `retrieval.sync_interval_s` seconds; `active = false` hides a document
 at once.
+
+## Analytics
+
+`/admin` > Analytics (`src/web/analytics.py`) reads the event log live. It
+buckets conversations by hour, day or month in the viewer's time zone (days
+and months follow the local calendar, so a DST day has 23 or 25 hours), and
+prices each period:
+
+- **Model:** the `cost_usd` logged with each call. OpenRouter returns the
+  real price; local Ollama calls are free unless
+  `costs.ollama_per_million_tokens` is set.
+- **Hosting:** `costs.hosting_per_month`, prorated by the hours in the
+  period (up to now for the current one).
+- **Staff review:** each handoff times `costs.review_time_s` at
+  `costs.labour_rate_per_hour`.
+- **By hand:** each request times `costs.manual_handle_time_s` at the same
+  rate, for comparison (metrics doc: 312 s at $35 to $55 an hour).
+
+G9 (cost per *successful* intake) also divides by the success rate, which
+only the eval harness measures, so the tab shows cost per request and per
+ticket filed instead.

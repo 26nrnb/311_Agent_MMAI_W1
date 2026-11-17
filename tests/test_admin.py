@@ -256,3 +256,76 @@ def test_pages_point_at_versioned_static_files():
     assert r.headers["cache-control"] == "no-cache"
     assert '/static/admin.js?v=' in r.text and '/static/admin.css?v=' in r.text
     assert '/static/app.js?v=' in client.get("/").text
+
+
+# ---------------------------------------------------------------- analytics
+
+def test_analytics_counts_requests_outcomes_and_cost(llm, fresh_store):
+    llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
+            "address": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+        "Done.",
+        [tool_call("handoff", {"rule_id": "E3", "reason": "can't tell which service"})])
+    chat("My recycling bin lid is cracked at 12 Oak Street")
+    chat("Something is wrong on my street")
+    chat("there's a gas smell in my kitchen")   # E1: sent to 911 before any model call
+
+    d = client.get("/api/admin/analytics", params={"bucket": "hour", "periods": 24, "tz": "America/Toronto"}).json()
+    t = d["totals"]
+    assert len(d["rows"]) == 24 and d["tz"] == "America/Toronto"
+    assert (t["requests"], t["ticket"], t["handoff"], t["answered"], t["emergencies"]) == (3, 1, 1, 1, 1)
+    assert (t["tickets"], t["handoffs"], t["turns"], t["model_calls"]) == (1, 1, 3, 4)
+    assert d["rows"][-1]["requests"] == 3   # all in the current hour
+    assert d["latency"]["turns"] == 3 and d["latency"]["p95_ms"] is not None
+    assert d["codes"][0]["code"] == "SW-BIN" and d["handoff_rules"][0]["rule_id"] == "E3"
+    assert isinstance(d["handoff_rules"][0]["text"], str)
+    # defaults: $45/h, 312 s per manual request and per handoff review, free hosting and Ollama
+    assert t["review_cost"] == pytest.approx(3.9) and t["manual_cost"] == pytest.approx(11.7)
+    assert t["total_cost"] == pytest.approx(3.9) and t["savings"] == pytest.approx(7.8)
+    assert "labour_rate_per_hour" in d["cost_defaults"]
+
+    assert client.get("/api/admin/analytics", params={"bucket": "week"}).status_code == 422
+    assert len(client.get("/api/admin/analytics", params={"bucket": "month", "periods": 999}).json()["rows"]) == 36
+
+
+def test_cost_assumptions_are_saved_into_app_yaml(llm, fresh_store):
+    r = client.put("/api/admin/costs", json={"costs": {"labour_rate_per_hour": 60, "hosting_per_month": 30}, "author": "g"})
+    assert r.status_code == 200, r.text
+    text = get_text("app.yaml")
+    assert "# Site and runtime settings" in text and "labour_rate_per_hour: 60" in text   # other comments kept
+    client.put("/api/admin/costs", json={"costs": {"currency": "CAD"}})
+    text = get_text("app.yaml")
+    assert text.count("costs:") == 1 and "labour_rate_per_hour: 60" in text and 'currency: "CAD"' in text
+    d = client.get("/api/admin/analytics").json()
+    assert d["costs"]["hosting_per_month"] == 30 and d["cost_defaults"] == []
+    assert d["totals"]["hosting_cost"] > 0
+
+    for bad in ({"labour_rate_per_hour": -1}, {"labour_rate_per_hour": "lots"}, {"tip_jar": 1}):
+        r = client.put("/api/admin/costs", json={"costs": bad})
+        assert r.status_code == 422, bad
+    assert put("app.yaml", text + "\n").status_code == 200
+    assert put("app.yaml", text.replace("labour_rate_per_hour: 60", "labour_rate_per_hour: -5")).status_code == 422
+
+
+def test_analytics_periods_follow_local_time():
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from src.web import analytics as stats
+
+    tz = ZoneInfo("America/Toronto")
+    now = datetime(2026, 11, 2, 15, 0, tzinfo=timezone.utc)   # DST ended Nov 1
+    edges = stats.window("day", 3, tz, now)
+    assert [e.day for e in edges] == [31, 1, 2, 3]
+    assert edges[2].timestamp() - edges[1].timestamp() == 25 * 3600   # the long day
+    months = stats.window("month", 3, tz, datetime(2027, 1, 15, tzinfo=timezone.utc))
+    assert [(e.year, e.month) for e in months] == [(2026, 11), (2026, 12), (2027, 1), (2027, 2)]
+
+    events = [
+        {"interaction_id": "a", "step": "input_screen", "created_at": "2026-11-01T03:30:00+00:00"},   # Oct 31 local
+        {"interaction_id": "a", "step": "reply", "created_at": "2026-11-01T03:30:02+00:00"},
+        {"interaction_id": "b", "step": "input_screen", "created_at": "2026-11-02T12:00:00+00:00"},
+        {"interaction_id": "c", "step": "input_screen", "created_at": "2026-10-01T12:00:00+00:00"},   # before the window
+    ]
+    d = stats.summarize(events, [], "day", edges, now, stats.DEFAULT_COSTS)
+    assert [r["requests"] for r in d["rows"]] == [1, 0, 1]
+    assert d["latency"]["p50_ms"] == 2000

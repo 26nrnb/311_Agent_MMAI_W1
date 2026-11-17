@@ -12,6 +12,11 @@
   --ok: #067647;
   --warn: #b54708;
   --radius: 22px;
+  /* Chart series (validated categorical slots 1, 2, 3, 7; see /admin Analytics) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-7: #6250d6;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -27,6 +32,10 @@
     --error: #f97066;
     --ok: #47cd89;
     --warn: #fdb022;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-7: #9085e9;
     color-scheme: dark;
   }
 }

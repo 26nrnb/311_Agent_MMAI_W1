@@ -129,6 +129,8 @@ both off). Everything returned about conversations is masked (D6).
 | GET | `/api/admin/handoffs` | `?status=&rule_id=&q=&limit=` | handoffs (masked), counts by status |
 | GET | `/api/admin/handoffs/{ref_id}` | | handoff with transcript, status history |
 | POST | `/api/admin/handoffs/{ref_id}/updates` | `{status?, note?, author?}` | change status (`pending`, `in_review`, `resolved`) and/or add a note |
+| GET | `/api/admin/analytics` | `?bucket=hour\|day\|month&periods=&tz=` | per-period and total requests, outcomes, tokens, latency (p50/p95), costs; by model, handoff rule and code; the cost assumptions |
+| PUT | `/api/admin/costs` | `{costs, author?, note?}` | save cost assumptions into the `costs` block of `app.yaml` (checked; 422 with `errors`) |
 | GET / POST | `/api/admin/kb` | POST `{title, content, source?, active?}` | documents; create |
 | PUT / DELETE | `/api/admin/kb/{id}` | PUT as POST | update; delete |
 
@@ -157,3 +159,16 @@ checks and actions are listed by `GET /api/admin/flow` and documented in
 - `record_updates(id, kind ticket|handoff, ref, old_status, new_status, note,
   author, created_at)`: every status change or note made by staff in
   `/admin`. The agent never writes here (A7).
+
+## Analytics (proposed)
+
+- Read-only over `interaction_events` (every step except `flow` traces, no
+  text) and `tickets` created by the agent (`interaction_id` set).
+- A request is one conversation, counted in the period of its first event.
+  Outcome: `handoff` if handed off, else `ticket` if one was filed, else
+  `answered`. A reply under E1 is also counted as an emergency.
+- Turn latency is `input_screen` to the next `reply` in the same
+  conversation (G10).
+- `app.yaml` `costs` (all optional, defaults in `src/web/analytics.py`):
+  `currency`, `labour_rate_per_hour`, `manual_handle_time_s`,
+  `review_time_s`, `hosting_per_month`, `ollama_per_million_tokens`.

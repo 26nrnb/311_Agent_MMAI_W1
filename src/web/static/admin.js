@@ -23,7 +23,7 @@
     return el;
   }
   // replaceChildren() would print a skipped (null) section as the text "null".
-  const fill = (el, ...children) => el.replaceChildren(...children.flat().filter(Boolean));
+  const fill = (el, ...children) => el.replaceChildren(...children.flat(Infinity).filter(Boolean));
 
   async function api(path, opts = {}) {
     const r = await fetch(`/api/admin${path}`, {
@@ -207,6 +207,7 @@
     flow: { start: () => flowEditor.load(), stop: () => {} },
     files: { start: () => files.load(), stop: () => {} },
     kb: { start: () => kb.start(), stop: () => kb.stop() },
+    analytics: { start: () => analytics.start(), stop: () => analytics.stop() },
   };
   let currentTab = "interactions";
   function showTab(name) {
@@ -1158,6 +1159,356 @@
     });
 
     return { start: () => poll.start(), stop: () => poll.stop() };
+  })();
+
+  // =====================================================================
+  // Analytics: requests per hour / day / month, latency, running cost
+  // =====================================================================
+  const analytics = (() => {
+    const RANGES = {
+      hour: [[24, "Last 24 hours"], [48, "Last 48 hours"], [168, "Last 7 days"], [744, "Last 31 days"]],
+      day: [[7, "Last 7 days"], [30, "Last 30 days"], [90, "Last 90 days"], [365, "Last 12 months"]],
+      month: [[6, "Last 6 months"], [12, "Last 12 months"], [24, "Last 24 months"], [36, "Last 36 months"]],
+    };
+    const OUTCOMES = [
+      { key: "ticket", label: "Filed a ticket", color: "var(--series-1)" },
+      { key: "handoff", label: "Handed to staff", color: "var(--series-2)" },
+      { key: "answered", label: "Answered or sent to 911", color: "var(--series-3)" },
+    ];
+    const COST_LABELS = {
+      currency: "Currency",
+      labour_rate_per_hour: "Staff cost per hour",
+      manual_handle_time_s: "Manual handle time (s)",
+      review_time_s: "Handoff review time (s)",
+      hosting_per_month: "Hosting per month",
+      ollama_per_million_tokens: "Ollama per million tokens",
+    };
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const view = { bucket: store("analytics-bucket") || "day", periods: Number(store("analytics-periods")) || 30 };
+    if (!RANGES[view.bucket]) view.bucket = "day";
+    let data = null;
+    let sig = "";
+    let costsShown = "";
+    let costsSaved = "";   // survives the form redrawing with the saved values
+    const poll = poller(load, 30000);
+
+    // ---------- formatting ----------
+    const num = (v) => (v == null ? "–" : Number(v).toLocaleString());
+    const pct = (v) => (v == null ? "–" : `${Math.round(v * 100)}%`);
+    const secs = (ms) => (ms == null ? "–" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+    function money(v, currency) {
+      if (v == null) return "–";
+      const small = v !== 0 && Math.abs(v) < 0.01;
+      const opts = small ? { maximumSignificantDigits: 2 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+      try {
+        return new Intl.NumberFormat(undefined, { style: "currency", currency, ...opts }).format(v);
+      } catch {
+        return `${new Intl.NumberFormat(undefined, opts).format(v)} ${currency}`;
+      }
+    }
+    const cur = (v) => money(v, data.costs.currency);
+    function periodLabel(iso, long = false) {
+      const d = new Date(iso);
+      if (data.bucket === "hour") {
+        const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+        return long || d.getHours() === 0 ? `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}` : time;
+      }
+      if (data.bucket === "day") return d.toLocaleDateString(undefined, long ? { weekday: "short", month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
+      return d.toLocaleDateString(undefined, { month: "short", year: long ? "numeric" : "2-digit" });
+    }
+
+    // ---------- toolbar ----------
+    function toolbar() {
+      const group = h("div", { class: "seg", role: "group", "aria-label": "Group by" },
+        ["hour", "day", "month"].map((b) => h("button", {
+          class: view.bucket === b ? "on" : "", "aria-pressed": String(view.bucket === b),
+          onclick: () => {
+            if (view.bucket === b) return;
+            view.bucket = b;
+            view.periods = RANGES[b][1][0];
+            remember();
+          },
+        }, b[0].toUpperCase() + b.slice(1))));
+      const range = h("select", { "aria-label": "Period", onchange: (e) => { view.periods = Number(e.target.value); remember(); } },
+        RANGES[view.bucket].map(([n, label]) => h("option", { value: String(n), selected: n === view.periods }, label)));
+      fill($("an-toolbar"),
+        h("div", { class: "an-title" }, h("h2", {}, "Analytics"),
+          h("p", { class: "hint" }, `Live from the event log in Supabase · times in ${tz}`)),
+        h("label", { class: "an-ctl" }, h("span", {}, "Group by"), group),
+        h("label", { class: "an-ctl" }, h("span", {}, "Show"), range),
+        h("span", { id: "an-updated", class: "hint live-note" }));
+    }
+    function remember() {
+      store("analytics-bucket", view.bucket);
+      store("analytics-periods", String(view.periods));
+      toolbar();
+      sig = "";
+      poll.now();
+    }
+
+    async function load() {
+      const q = new URLSearchParams({ bucket: view.bucket, periods: String(view.periods), tz });
+      const next = await api(`/analytics?${q}`);
+      $("an-updated").textContent = `updated ${clock(next.generated_at)}`;
+      const s = JSON.stringify({ ...next, generated_at: null });
+      if (s === sig) return;
+      sig = s;
+      data = next;
+      render();
+    }
+
+    // ---------- tiles ----------
+    function tile(label, value, sub, status) {
+      return h("div", { class: "tile" },
+        h("div", { class: "tile-label" }, label),
+        h("div", { class: "tile-value" }, value),
+        sub ? h("div", { class: "tile-sub" }, status ? h("span", { class: `chip ${status}` }, status === "ok" ? "✓ on target" : "✕ over target") : null, sub) : null);
+    }
+    function tiles() {
+      const t = data.totals;
+      const lat = data.latency;
+      const status = lat.p95_ms == null ? null : lat.p95_ms < lat.target_ms ? "ok" : "err";
+      return h("div", { class: "tiles" },
+        tile("Requests", num(t.requests), `${num(t.turns)} messages from residents`),
+        tile("Tickets filed", num(t.tickets), `${pct(t.ticket_rate)} of requests`),
+        tile("Handed to staff", num(t.handoffs), `${pct(t.handoff_rate)} of requests`),
+        tile("Reply time p95", secs(lat.p95_ms), ` median ${secs(lat.p50_ms)} · target under ${secs(lat.target_ms)} (G10)`, status),
+        tile("Running cost", cur(t.total_cost), `${cur(t.cost_per_request)} per request`),
+        tile("By hand it would cost", cur(t.manual_cost), `${cur(t.manual_per_request)} per request`),
+        tile(t.savings >= 0 ? "Saved" : "Extra cost", cur(Math.abs(t.savings)), t.requests ? `${pct(t.manual_cost ? t.savings / t.manual_cost : null)} of the manual cost` : "no requests yet"));
+    }
+
+    // ---------- column chart (SVG) ----------
+    const SVG = "http://www.w3.org/2000/svg";
+    function s(tag, attrs, ...children) {
+      const el = document.createElementNS(SVG, tag);
+      for (const [k, v] of Object.entries(attrs || {})) if (v != null) el.setAttribute(k, v);
+      for (const c of children.flat()) if (c != null) el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+      return el;
+    }
+    function niceMax(v) {
+      if (v <= 0) return 1;
+      const p = 10 ** Math.floor(Math.log10(v));
+      return [1, 2, 2.5, 5, 10].map((m) => m * p).find((m) => m >= v);
+    }
+    // Column with a 4px rounded top and a square base.
+    function column(x, y, w, hgt, rounded) {
+      const r = rounded ? Math.min(4, w / 2, hgt) : 0;
+      return `M${x},${y + hgt}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + hgt}Z`;
+    }
+
+    function chart({ series, value, fmt, tip, whole = false }) {
+      const wrap = h("div", { class: "chart" });
+      const tipEl = h("div", { class: "chart-tip", role: "status", hidden: true });
+      wrap.append(tipEl);
+      const draw = () => {
+        const W = Math.max(280, wrap.clientWidth || 640);
+        const H = 220, L = 52, R = 8, T = 10, B = 28;
+        const rows = data.rows;
+        const pw = W - L - R, ph = H - T - B;
+        const band = pw / rows.length;
+        const bw = Math.max(2, Math.min(24, band * 0.7));
+        const top = Math.max(...rows.map((r) => series.reduce((a, k) => a + value(r, k.key), 0)));
+        // Counts get whole-number ticks: the top is a multiple of the 4 grid steps.
+        const max = whole ? Math.max(4, Math.ceil(top / 4) * 4, niceMax(top) % 4 ? 0 : niceMax(top)) : niceMax(top);
+        const y = (v) => T + ph - (v / max) * ph;
+        const svg = s("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img", "aria-hidden": "true" });
+        for (let i = 0; i <= 4; i++) {
+          const v = (max / 4) * i;
+          svg.append(s("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid" }),
+            s("text", { x: L - 6, y: y(v) + 4, class: "tick", "text-anchor": "end" }, fmt(v, true)));
+        }
+        const every = Math.max(1, Math.ceil(64 / band));
+        const hover = s("rect", { class: "band-hover", y: T, height: ph, width: band, visibility: "hidden" });
+        svg.append(hover);
+        rows.forEach((r, i) => {
+          const x = L + i * band + (band - bw) / 2;
+          let base = 0;
+          const live = series.filter((k) => value(r, k.key) > 0);
+          live.forEach((k, j) => {
+            const v = value(r, k.key);
+            const top = y(base + v), bottom = y(base);
+            const gap = j > 0 ? 2 : 0;   // surface gap between stacked segments
+            const hgt = Math.max(0, bottom - top - gap);
+            if (hgt > 0) svg.append(s("path", { d: column(x, top, bw, hgt, j === live.length - 1), fill: k.color }));
+            base += v;
+          });
+          if (i % every === 0 || i === rows.length - 1 && rows.length <= 12) {
+            svg.append(s("text", { x: L + i * band + band / 2, y: H - 8, class: "tick", "text-anchor": "middle" }, periodLabel(r.start)));
+          }
+          const hit = s("rect", { x: L + i * band, y: T, width: band, height: ph, fill: "transparent" });
+          hit.addEventListener("mouseenter", () => {
+            hover.setAttribute("x", L + i * band);
+            hover.setAttribute("visibility", "visible");
+            fill(tipEl, h("strong", {}, periodLabel(r.start, true)), tip(r));
+            tipEl.hidden = false;
+            const left = Math.min(Math.max(0, L + i * band + band / 2 - tipEl.offsetWidth / 2), W - tipEl.offsetWidth);
+            tipEl.style.left = `${left}px`;
+          });
+          hit.addEventListener("mouseleave", () => { hover.setAttribute("visibility", "hidden"); tipEl.hidden = true; });
+          svg.append(hit);
+        });
+        svg.append(s("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "axis" }));
+        wrap.querySelector("svg")?.remove();
+        wrap.prepend(svg);
+      };
+      requestAnimationFrame(draw);
+      wrap._draw = draw;
+      return wrap;
+    }
+    window.addEventListener("resize", () => {
+      if (currentTab !== "analytics") return;
+      clearTimeout(window._anResize);
+      window._anResize = setTimeout(() => document.querySelectorAll("#tab-analytics .chart").forEach((c) => c._draw && c._draw()), 150);
+    });
+
+    function legend(series) {
+      if (series.length < 2) return null;
+      return h("div", { class: "legend" }, series.map((k) =>
+        h("span", { class: "legend-item" }, h("span", { class: "swatch", style: `background:${k.color}` }), k.label)));
+    }
+    function tableView(head, rows) {
+      return h("details", { class: "table-view" }, h("summary", {}, "Show as a table"),
+        h("div", { class: "table-scroll" }, h("table", { class: "data" },
+          h("thead", {}, h("tr", {}, head.map((c) => h("th", {}, c)))),
+          h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c) => h("td", {}, c))))))));
+    }
+    const per = () => ({ hour: "hour", day: "day", month: "month" }[data.bucket]);
+
+    function requestsCard() {
+      const rows = data.rows;
+      return h("section", { class: "card" },
+        h("div", { class: "card-head" }, h("h3", {}, `Requests per ${per()}`),
+          h("span", { class: "hint" }, "A request is one conversation, counted when it started.")),
+        legend(OUTCOMES),
+        chart({
+          series: OUTCOMES, value: (r, k) => r[k], whole: true,
+          fmt: (v) => num(v),
+          tip: (r) => [h("div", {}, `${num(r.requests)} requests · ${num(r.turns)} messages${r.emergencies ? ` · ${num(r.emergencies)} sent to 911` : ""}`),
+            OUTCOMES.map((k) => h("div", { class: "tip-row" }, h("span", { class: "swatch", style: `background:${k.color}` }), `${k.label}: ${num(r[k.key])}`))],
+        }),
+        tableView([per()[0].toUpperCase() + per().slice(1), "Requests", ...OUTCOMES.map((k) => k.label), "Sent to 911", "Messages"],
+          rows.map((r) => [periodLabel(r.start, true), num(r.requests), ...OUTCOMES.map((k) => num(r[k.key])), num(r.emergencies), num(r.turns)])));
+    }
+
+    function costCard() {
+      const series = [{ key: "total_cost", label: "Running cost", color: "var(--series-7)" }];
+      return h("section", { class: "card" },
+        h("div", { class: "card-head" }, h("h3", {}, `Running cost per ${per()}`),
+          h("span", { class: "hint" }, "Model spend + hosting + staff time on handoffs.")),
+        chart({
+          series, value: (r) => r.total_cost,
+          fmt: (v) => cur(v),
+          tip: (r) => [h("div", {}, `Total ${cur(r.total_cost)} · by hand ${cur(r.manual_cost)}`),
+            h("div", { class: "tip-row" }, `Model ${cur(r.model_cost)} · hosting ${cur(r.hosting_cost)} · staff review ${cur(r.review_cost)}`)],
+        }),
+        tableView([per()[0].toUpperCase() + per().slice(1), "Model", "Hosting", "Staff review", "Total", "By hand"],
+          data.rows.map((r) => [periodLabel(r.start, true), cur(r.model_cost), cur(r.hosting_cost), cur(r.review_cost), cur(r.total_cost), cur(r.manual_cost)])));
+    }
+
+    function simpleTable(head, rows, empty) {
+      if (!rows.length) return h("p", { class: "hint" }, empty);
+      return h("div", { class: "table-scroll" }, h("table", { class: "data" },
+        h("thead", {}, h("tr", {}, head.map((c) => h("th", {}, c)))),
+        h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c) => h("td", {}, c)))))));
+    }
+
+    function breakdown() {
+      const t = data.totals, c = data.costs;
+      const rate = c.labour_rate_per_hour;
+      const p = data.problems;
+      return h("div", { class: "an-grid" },
+        h("section", { class: "card" }, h("h3", {}, "Where the cost goes"),
+          simpleTable(["", "Amount", "Per request"], [
+            ["Model calls", cur(t.model_cost), cur(t.requests ? t.model_cost / t.requests : null)],
+            ["Hosting", cur(t.hosting_cost), cur(t.requests ? t.hosting_cost / t.requests : null)],
+            [`Staff review (${num(t.handoffs)} handoff${t.handoffs === 1 ? "" : "s"} × ${num(c.review_time_s)} s)`, cur(t.review_cost), cur(t.requests ? t.review_cost / t.requests : null)],
+            [h("strong", {}, "Running cost"), h("strong", {}, cur(t.total_cost)), h("strong", {}, cur(t.cost_per_request))],
+            [`By hand (${num(c.manual_handle_time_s)} s at ${cur(rate)}/h)`, cur(t.manual_cost), cur(t.manual_per_request)],
+          ], ""),
+          h("p", { class: "hint" }, `Cost per ticket filed: ${cur(t.cost_per_ticket)}. G9 in the metrics doc also divides by the intake success rate, which only the eval harness measures.`)),
+        h("section", { class: "card" }, h("h3", {}, "Models"),
+          simpleTable(["Model", "Calls", "Errors", "Tokens in", "Tokens out", "Cost"],
+            data.models.map((m) => [h("span", { class: "mono" }, m.model), num(m.calls), num(m.errors), num(m.tokens_in), num(m.tokens_out), money(m.cost, "USD")]),
+            "No model calls in this period."),
+          p.unpriced_calls ? h("p", { class: "hint" }, `${num(p.unpriced_calls)} calls came back without a price and count as free.`) : null),
+        h("section", { class: "card" }, h("h3", {}, "Why requests were handed off"),
+          simpleTable(["Rule", "Handoffs", ""],
+            data.handoff_rules.map((r) => [ruleChip(r.rule_id), num(r.count), short(r.text || "", 90)]),
+            "No handoffs in this period.")),
+        h("section", { class: "card" }, h("h3", {}, "Tickets by service"),
+          simpleTable(["Code", "Service", "Tickets"],
+            data.codes.map((r) => [h("span", { class: "mono" }, r.code), r.category || "", num(r.count)]),
+            "No tickets in this period.")),
+        h("section", { class: "card" }, h("h3", {}, "Safety and problems"),
+          simpleTable(["", "Count"], [
+            ["Emergencies sent to 911 (E1)", num(data.totals.emergencies)],
+            ["Model errors (F1)", num(p.model_errors)],
+            ["Tool failures (F5)", num(p.tool_failures)],
+            ["Slowest reply", secs(data.latency.max_ms)],
+          ], "")));
+    }
+
+    // ---------- cost assumptions (saved to app.yaml in Supabase) ----------
+    function assumptions() {
+      const c = data.costs;
+      const inputs = {};
+      const msg = h("span", { class: "hint" }, costsSaved);
+      const save = h("button", { class: "btn primary" }, "Save assumptions");
+      const fields = Object.keys(COST_LABELS).map((k) => {
+        inputs[k] = h("input", k === "currency"
+          ? { value: c[k], maxlength: "8", "aria-label": COST_LABELS[k] }
+          : { type: "number", min: "0", step: "any", value: String(c[k]), "aria-label": COST_LABELS[k] });
+        return h("label", { class: "cost-field" },
+          h("span", { class: "cost-label" }, COST_LABELS[k], data.cost_defaults.includes(k) ? h("span", { class: "chip" }, "default") : null),
+          inputs[k],
+          h("span", { class: "hint" }, data.cost_notes[k] || ""));
+      });
+      save.addEventListener("click", async () => {
+        const costs = {};
+        for (const [k, el] of Object.entries(inputs)) costs[k] = k === "currency" ? el.value.trim() : Number(el.value);
+        save.disabled = true;
+        msg.className = "hint";
+        msg.textContent = "Saving…";
+        try {
+          await api("/costs", { method: "PUT", body: JSON.stringify({ costs, author: who() }) });
+          costsSaved = `Saved to app.yaml at ${clock(new Date().toISOString())}.`;
+          msg.textContent = costsSaved;
+          costsShown = "";
+          sig = "";
+          await load();
+        } catch (e) {
+          msg.className = "hint error-text";
+          msg.textContent = (e.errors || [e.message]).join(" ");
+        } finally {
+          save.disabled = false;
+        }
+      });
+      return h("section", { class: "card" },
+        h("div", { class: "card-head" }, h("h3", {}, "Cost assumptions"),
+          h("span", { class: "hint" }, "Stored in app.yaml (costs) in Supabase, with history in the Files tab.")),
+        h("div", { class: "cost-fields" }, fields),
+        h("div", { class: "ed-actions" }, save, msg));
+    }
+
+    function render() {
+      if (!data.totals.requests && !data.models.length) {
+        fill($("an-body"), tiles(), h("div", { class: "empty-state" }, "No conversations in this period yet. Try a longer range, or chat on the site to see it here."));
+      } else {
+        fill($("an-body"), tiles(), h("div", { class: "an-charts" }, requestsCard(), costCard()), breakdown());
+      }
+      // Don't redraw the form under someone typing; refresh it only when the saved values change.
+      const shown = JSON.stringify([data.costs, data.cost_defaults]);
+      if (shown !== costsShown) {
+        costsShown = shown;
+        fill($("an-costs"), assumptions());
+      }
+    }
+
+    return {
+      start() { toolbar(); sig = ""; poll.start(); },
+      stop() { poll.stop(); },
+    };
   })();
 
   // ---------- boot ----------
