@@ -18,6 +18,20 @@ cloudflared/*.json
 # Local data that must not be committed
 data/raw/
 results/scratch/
+# Test sets and hand-written cases stay off GitHub (course rule; metrics.md):
+# only data/test/LOCK.md is committed, the files are shared with the team.
+data/test/*
+!data/test/.gitkeep
+!data/test/LOCK.md
+data/protected/
+data/*.db
+# Eval harness: model answers and event logs hold test-derived text, so they
+# are shared with the locked test set, never pushed. Results CSVs, manifests
+# and summaries hold no message text and are committed.
+results/cache/
+results/events/
+results/demo/
+results/fake_*.csv
 
 # OS / editors
 .DS_Store

@@ -147,12 +147,14 @@ src/guardrails/    input screen, masking/redaction, output check
 src/rag/           knowledge-base sync (chunking) and embeddings
 src/web/           FastAPI server, static chat page, /admin page and API
 src/data_gen/      synthetic data generation (W2)
-src/eval/          evaluation harness (W5/W6)
+src/eval/          evaluation harness (W5/W6): harness.py runs setups, score.py builds the summary,
+                   outcome.py/checks.py score a conversation, setups.yaml names every setup
 supabase/          SQL migrations and seed data
-data/test/         locked test sets (read only by the eval harness)
+data/test/         locked test sets (read only by the eval harness; git-ignored, only LOCK.md is committed)
+data/demo/         the five scripted demo cases and their seed tickets (demo material, not test data)
 tests/             pytest suite (no keys or network needed); fixtures/config is the test config
-results/           run outputs
-docs/              interfaces, architecture, decisions, prompt changelog, deployment
+results/           results files, manifests and summary (committed); cache/ and events/ (shared, not committed)
+docs/              interfaces, architecture, decisions, evaluation, demo script, prompt changelog, deployment
 ```
 
 ## Commands
@@ -163,7 +165,58 @@ docs/              interfaces, architecture, decisions, prompt changelog, deploy
 | `python run.py ingest` | `make ingest` | Re-chunk changed Supabase KB documents now (the server also does this every 60 s) |
 | `python run.py config pull DIR` / `push DIR` | | Copy the Supabase config to / from a folder |
 | `python run.py test` | `make test` | Run the tests (in-memory store, fixture config, scripted model) |
+| `python run.py eval classify ...` / `eval agent ...` | | Run a setup over a locked test set ([docs/evaluation.md](docs/evaluation.md)) |
+| `python run.py reproduce` | `make reproduce` | Rebuild every results table from cached model outputs, no API keys |
+| `python run.py score` | `make score` | Score `results/*.csv` into `results/summary.json` and `summary.md` |
+| `python run.py demo` | `make demo` | Rehearse the five scripted demo cases ([docs/demo_cases.md](docs/demo_cases.md)) |
 | `docker compose up -d --build` | | Build and start the site in Docker |
+
+## Evaluation and reproducing the results
+
+Every number in the report comes from a file in `results/`, and one command rebuilds them all:
+
+```bash
+make reproduce        # or: python run.py reproduce
+```
+
+- **With the shared data bundle** (the locked test sets in `data/test/` plus `results/cache/` and `results/events/`, shared on Teams because test-derived text stays off GitHub): it replays every recorded run from its cached model answers, with no API keys or network. It reports whether each rebuilt results file is identical to the committed one, then rescores everything.
+- **From a fresh clone without that bundle:** it rescores the committed results files into `results/summary.json` and `results/summary.md`.
+
+To run a setup yourself (setups are named in `src/eval/setups.yaml`):
+
+```bash
+python run.py eval classify --setup keyword_stub --test data/test/test_heldout.jsonl --name heldout
+python run.py eval agent --setup haiku --test data/test/test_heldout.jsonl --name heldout --limit 20
+```
+
+How cases are scored, what each file holds and the known limits are in [docs/evaluation.md](docs/evaluation.md).
+
+## Demo
+
+The five scripted cases (routine missed collection, ambiguous dumping report, road hazard, duplicate, prompt injection) run on the chat page. Rehearse them first with `python run.py demo`. The script, what to point out, and what to do if something goes wrong are in [docs/demo_cases.md](docs/demo_cases.md).
+
+## How to extend: add a service category in an afternoon
+
+The agent never hard-codes a category, so a new one is mostly configuration:
+
+1. **Policy** (`/admin > Files > policy.yaml`): add the code under `service_catalogue`:
+   - `category` and `unit`
+   - `required_fields`
+   - `field_options` for closed values
+   - `escalation_triggers`
+   - `duplicate_window`
+
+   Bump `version` and add a `change_log` line. The tools, the code list the model may choose from, and the catalogue in the system prompt all read this file, so nothing else in `src/` changes.
+2. **Escalation and wording:** if a trigger must be enforced in code rather than only by the model, add a node in `/admin > Flow`, or a pattern in `guardrails.yaml` for an emergency. Add any new approved wording under `wording`.
+3. **Classifier:**
+   - Today (stub): add the code's keywords to `_KEYWORDS` in `src/models/classifier.py`.
+   - For the real classifiers: add the label to the prompts, and retrain the fine-tuned model on data that includes it.
+4. **Data:** add the code to `SERVICE_CODES` (and `CONFUSABLE`) in `src/data_gen/synth_311_pipeline.py`, regenerate, and write some cases by hand.
+5. **Tests:**
+   - Add the code to `tests/fixtures/config/policy.yaml`.
+   - Add a `create_ticket` test with its required fields to `tests/test_tools.py`.
+   - Run `python run.py test`.
+6. **Evaluate:** the harness reads codes from the data and the policy, so it needs no change. Run `python run.py eval agent ...` on the new test set, then `make reproduce`.
 
 ## Team docs
 
@@ -171,6 +224,9 @@ docs/              interfaces, architecture, decisions, prompt changelog, deploy
 - [docs/architecture.md](docs/architecture.md): how a turn flows through the system.
 - [docs/architecture_diagram.html](docs/architecture_diagram.html): the whole site as a swim-lane diagram (open in a browser).
 - [docs/decisions.md](docs/decisions.md): what we chose and why.
+- [docs/metrics 2.md](docs/metrics%202.md) and [docs/results_format 1.md](docs/results_format%201.md): what we measure, the go thresholds, and the results file columns.
+- [docs/evaluation.md](docs/evaluation.md): the eval harness, `make reproduce`, and how a case is scored.
+- [docs/demo_cases.md](docs/demo_cases.md): the five scripted demo cases.
 - [docs/deployment.md](docs/deployment.md): running behind Cloudflare Tunnel.
 
 Keys only in `.env` (git-ignored). Never commit real personal data.

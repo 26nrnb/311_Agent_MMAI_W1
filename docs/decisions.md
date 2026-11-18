@@ -110,3 +110,32 @@ alternatives, and why. The report draws on this file directly.
 
 * **Chose:** a button in /admin > Interactions that replays a logged conversation on a chosen model, and a side-by-side comparison in Analytics (speed, tokens, cost, and each turn's tools, rules and outcome). Writes to City records are simulated in a re-run; duplicate search sees only tickets that existed before the original; re-runs are left out of usage and cost.
 * **Why:** the team wants to compare Ollama with a commercial model on the requests residents actually make, not only on speed. Replaying the masked log keeps raw resident text out of storage (D6), at the cost of stand-in details and follow-up messages written for the original agent; re-running on the original model gives a like-for-like baseline.
+
+## D-021 Eval harness records and replays model answers (2026-11-18)
+
+(D-020 is taken on the `w7-economics-inputs` branch.)
+
+* **Chose:**
+  * `src/eval/harness.py` runs each case in a fresh in-memory store, with the same tickets, a frozen clock (the ticket store's as-of date) and the run's config snapshot.
+  * Every model, classifier and judge answer is cached under a key made from the model and the exact messages. That includes errors and retries.
+  * `make reproduce` replays every run from that cache with no API keys, then rescores every results file.
+* **Alternatives:**
+  * Rescore the results CSVs only. Cheaper, but nothing checks that the numbers come from the recorded model outputs.
+  * Re-run the models. That needs keys and money, and model drift changes the numbers.
+* **Why:**
+  * The rubric's "Great" bar asks for key results reproduced with one command, and metrics.md asks for cached raw outputs.
+  * Because the agent is deterministic around the model call, a replay sends the same messages, and the harness can report that a rebuilt results file is byte-identical to the committed one.
+* **Affects:**
+  * Results CSVs, manifests and the summary are committed; none of them holds message text.
+  * `results/cache/` and `results/events/` hold test-derived text, so they are git-ignored and shared with the locked test files (course rule).
+
+## D-022 The harness derives the outcome and checks policy independently (2026-11-18)
+
+* **Chose:**
+  * Until the agent logs its outcome (open item for D), the harness derives it from what the conversation did: tickets, handoffs and their rules, the 911 wording, quoted duplicates, refusals, questions. Fixed, ordered rules that never read the expected label.
+  * Commitments, invented IDs, personal data and M1/M2/M7/D8/D1 are checked with patterns kept in `src/eval/checks.yaml`, separate from the guardrail patterns in `guardrails.yaml`.
+* **Why:**
+  * metrics.md keeps outcome, code and fields rule-based.
+  * If the harness reused the reply check's own patterns, anything that slipped past the guardrail would slip past the measurement too, and G6 would read 0 by construction.
+  * The LLM judge adds findings and never clears one.
+* **Known limit:** a genuine request with a hidden instruction (S5, expected `create_ticket`) reads as `refuse_and_continue` when the agent says aloud that it won't follow the instruction. Adversarial behaviour is scored through `adversarial_pass` and the judge.

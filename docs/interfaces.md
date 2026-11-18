@@ -78,7 +78,13 @@ OpenRouter's reported cost, 0 for Ollama.
 ## Results file (F)
 
 `results/<run_id>.csv`, one row per test case per setup, plus
-`results/summary.json`.
+`results/summary.json`. Columns: `docs/results_format 1.md` (F). Written by
+the eval harness (`src/eval/harness.py`, E), which also writes
+`results/manifests/<run_id>.json` (what was run) and keeps the raw model
+answers in `results/cache/<run_id>/` for `make reproduce`; see
+`docs/evaluation.md`. The harness reads both interaction-record shapes
+(`id`/`service_code` from the pipeline and `interaction_id`/`expected_code`
+above).
 
 ## LLM backbone (proposed)
 
