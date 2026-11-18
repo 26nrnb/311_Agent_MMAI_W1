@@ -430,7 +430,7 @@ PLACEHOLDERS = (
     "ticket_number", "date", "dob", "sin",
 )
 
-DEFAULT_OUT_DIR = "data/synthetic_v1"
+DEFAULT_OUT_DIR = "data/synthetic"
 DEFAULT_CACHE_DIR = ".cache/synth_llm"
 DEFAULT_TICKETS_DB = "data/tickets.db"
 DEFAULT_PROTECTED_DIR = "data/protected"     # hand-written test inputs; never in prompts

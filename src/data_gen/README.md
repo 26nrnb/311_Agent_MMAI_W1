@@ -16,7 +16,7 @@ python synth_311_pipeline.py --offline --n 120 --out data/smoke
 python synth_311_pipeline.py --n 60 --out data/pilot --max-cost 0.25
 
 # 3. Full run (~3,000 messages, roughly $1-2 on the default models)
-python synth_311_pipeline.py --n 3000 --out data/synthetic_v1 --max-cost 3.00
+python synth_311_pipeline.py --n 3000 --out data/synthetic --max-cost 3.00
 ```
 
 **Key:** one OpenRouter key (`sk-or-...`) as `OPENROUTER_API_KEY` in your environment,
