@@ -1,0 +1,46 @@
+# Setups the eval harness can run (owner: E, W5; model choices: C and D).
+#
+# A setup is a name that every results file, summary row and ablation refers
+# to, so keep a name once it has results: add a new name for a new model,
+# prompt or setting instead of editing one. The model ids are OpenRouter or
+# Ollama ids; check them on openrouter.ai/models before a run.
+#
+#   python -m src.eval.harness classify --setup NAME --test FILE --name heldout
+#   python -m src.eval.harness agent    --setup NAME --test FILE --name heldout
+
+# Classifier setups (harness v1): run through classify(text) only.
+# keyword_stub is the stub in src/models/classifier.py. Any other name is
+# passed to make_classifier(name) once C adds it there (Interfaces doc,
+# section 4), e.g. haiku_zeroshot, haiku_fewshot, sonnet_fewshot, finetuned_v1.
+classifier:
+  keyword_stub: {}
+
+# Agent setups (harness v2): the whole agent, end to end.
+#   provider, model  passed to src.models.llm.chat
+#   key_env          environment variable holding the OpenRouter key (read at run
+#                    time only; never written to results, cache or manifests)
+#   classifier       classifier setup behind the agent's classifier tool
+agent:
+  ollama_qwen3_4b:
+    provider: ollama
+    model: "qwen3:4b-instruct"
+    classifier: keyword_stub
+  haiku:
+    provider: openrouter
+    model: anthropic/claude-haiku-5.5
+    key_env: OPENROUTER_API_KEY
+    classifier: keyword_stub
+  sonnet:
+    provider: openrouter
+    model: anthropic/claude-sonnet-5.5
+    key_env: OPENROUTER_API_KEY
+    classifier: keyword_stub
+
+# LLM judge setups (metrics.md section 5). The rubric is a prompt file in the
+# Supabase config (prompts/judge/...), owned by F.
+judge:
+  sonnet_judge:
+    provider: openrouter
+    model: anthropic/claude-sonnet-5.5
+    key_env: OPENROUTER_API_KEY
+    rubric: judge/judge_v1.md

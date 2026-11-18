@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: install serve ingest test reproduce
+.PHONY: install serve ingest test reproduce score demo
 
 install:
 	$(PY) -m pip install -r requirements.txt
@@ -14,6 +14,14 @@ ingest:
 test:
 	$(PY) run.py test
 
-# W5/W6: regenerates every results table from cached model outputs (stub until harness v2)
+# W5/W6: replay every recorded run from results/cache (no API keys) and rebuild
+# results/summary.json and summary.md. Without the shared cache it rescores the
+# committed results files.
 reproduce:
-	@echo "not implemented yet: eval harness v2 (src/eval/), due Nov 18"
+	$(PY) run.py reproduce
+
+score:
+	$(PY) run.py score
+
+demo:
+	$(PY) run.py demo
