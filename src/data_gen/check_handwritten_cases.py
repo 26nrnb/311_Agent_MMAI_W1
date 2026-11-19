@@ -52,6 +52,7 @@ def main(path, db=None):
             E(r, "non-English must be handoff_language unless it is a hazard")
         if r["lang"] in p.SUPPORTED_LANGS and act == "handoff_language": E(r, "English case labelled handoff_language")
         if act == "link_duplicate" and not r["ticket_ref"]: E(r, "link_duplicate needs ticket_ref")
+        if act == "report_status" and not r["ticket_ref"]: E(r, "report_status needs ticket_ref")   # 311 v4
         if r["ticket_ref"] and r["ticket_ref"] not in ids: E(r, f"ticket_ref {r['ticket_ref']} not in store")
         for c in r["secondary_codes"]:
             if c not in ROUTE: E(r, f"bad secondary code {c}")
