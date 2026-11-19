@@ -16,8 +16,11 @@ python synth_311_pipeline.py --offline --n 120 --out data/smoke
 python synth_311_pipeline.py --n 60 --out data/pilot --max-cost 0.25
 
 # 3. Full run (~3,000 messages, roughly $1-2 on the default models)
-python synth_311_pipeline.py --n 3000 --out data/synthetic_v1 --max-cost 3.00
+python synth_311_pipeline.py --n 3000 --out data/synthetic --seal-adversarial --max-cost 3.00
 ```
+
+The Kaggle notebook loads this same file (from its own folder, a Kaggle dataset, or GitHub);
+it no longer carries its own copy of the code, so edit the pipeline here only.
 
 **Key:** one OpenRouter key (`sk-or-...`) as `OPENROUTER_API_KEY` in your environment,
 a local `.env`, or a Kaggle secret. Set a credit limit on the key. The course does
@@ -26,6 +29,11 @@ not reimburse top-ups, so agree the budget with Saif.
 **Before step 3:** put every hand-written test input (John's 35, Uday's trigger
 examples, Abi's and Saif's cases) in `data/protected/*.txt`, one message per line.
 Generated messages too similar to them are rejected (`matches_protected_test`).
+
+**Sealed adversarial set:** with `--seal-adversarial`, the adversarial rows of the test split
+leave `test.jsonl` and go to `data/protected/adversarial_sealed.jsonl` (plus
+`adversarial_sealed_review.csv`). Use it only for the final evaluation; never tune on it or
+commit it (`data/` is git-ignored).
 
 ## Outputs (in `--out`)
 
@@ -88,3 +96,5 @@ Do not commit `.env`, `data/` or `.cache/` (see `.gitignore`).
 | 311-v2 (data 2.2) | Nov 13 | Prompt unchanged. Ticket store on Interface 7 columns; duplicate cases respect each code's window (days, radius, match fields) and other cases can no longer land on an open ticket by accident; non-English share raised to ~18%; `handoff_language` rows use rule M6; `channel` values `mobile_app` / `web_form`. | Check against the 311 Interfaces doc: old store lacked the columns; duplicate cases could point at tickets outside their window or with a different bin type; non-English share was ~12%. |
 | 311-v2 (data 2.3) | Nov 14 | Prompt unchanged. Varden Ave fixture tickets (001046-001048) now have `scheduled_day` = Tuesday. | Hand-written case hw_029 says the Varden pickup day is Tuesday; the fixtures had a Thursday placeholder. Gold label unchanged. |
 | 311-v2 (data 2.4) | Nov 14 | Prompt unchanged. New closed-list values: AN-INJ dog, cat; TR-TREE fallen limb, leaning tree; PS-PROP structural damage, no heat; IL-DUMP hazardous material. Each is reserved for its E2 trigger (`TRIGGER_FIELD_VALUES`): only `e2_trigger` cases draw them, and those cases now always carry the matching value. Seeded ticket store unchanged. | Hand-written cases had no value for these (summary open item 6), and generated trigger cases could carry a contradicting value (e.g. `dog_or_cat` with animal_type pigeon). Offline check, 3,000 rows: 54 rows use the new values, all `escalate_human` with the right trigger; 0 on other outcomes. |
+| 311-v3 | Nov 17 | Aligned with Operating Policy v0.3. New E2 location triggers, each with a look-alike: `near_school` (AN-DEAD, IL-DUMP), `hospital_route` (RD-POT, TR-TREE), `vulnerable_residents` (PS-PROP). The school landmark is kept out of AN-DEAD / AN-INJ / IL-DUMP cases that are not `near_school`, and always used on landmark-style `near_school` trigger cases. OOS topics extended with the v0.3 routing table; the OOS instruction no longer says "street problem". New emergency: streetlight pole down with exposed wires. E1 look-alikes: fire pit and fire station added, "empty gas can" removed. New adversarial subtype `volunteered_plate` (D1, EC-32: plate offered, never collected; `create_ticket`, 4% of adversarial, taken from `volunteered_pii`). `--seal-adversarial` export. Not generated yet (open team questions): AN-INJ near school, rodents, encampments. | Policy v0.3 review (Nov 16-17). Offline check, 3,000 rows: every new trigger present with the right outcome; school landmark appears 0 times on AN-DEAD / AN-INJ / IL-DUMP rows other than `near_school` triggers; 98 adversarial rows sealed, 0 left in test.jsonl, 0 templates shared with train; 105 hand-written cases still pass the checker. |
+| 311-v4 | Nov 18 | Aligned with Operating Policy v1.0 (frozen Nov 18). SW-MISS repeat-miss trigger (`chronic_miss`) dropped, so 20 triggers remain; near-school no longer applies to AN-INJ; "rodents or pests" added to PS-PROP issue types and rats in a park to the OOS topics; new RD-POT cyclist look-alike. New outcome `report_status` (ten outcomes). New hard subtypes: `status_check` (EC-13b/c, `report_status`), `status_no_postal` (EC-13), `status_wrong_postal` (EC-13e), `status_new_problem` (EC-13d), all against real open tickets in the store; `trigger_vague_location` (EC-02b, `ask_clarification` with `trigger_id` kept); `private_tree` (EC-15b) and `private_dumping` (EC-15d), both `handoff_oos`. New emergency: a private tree on a sparking line (EC-15c). Shares come out of missing_field, vague_category, e2_trigger and the duplicate cases. Two-turn edge cases are not generated. Adding a PS-PROP value re-shuffles the seeded ticket store, so re-seed `tickets.db` (and the Supabase seed) from this version. | Policy v1.0. Offline check, 3,000 rows: every status row points at a real open ticket with the right (or, for `status_wrong_postal`, a wrong) postal code; no `chronic_miss` or AN-INJ near-school rows; 20 trigger IDs match the policy's trigger table. |

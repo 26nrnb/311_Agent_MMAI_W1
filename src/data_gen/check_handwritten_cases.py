@@ -52,6 +52,7 @@ def main(path, db=None):
             E(r, "non-English must be handoff_language unless it is a hazard")
         if r["lang"] in p.SUPPORTED_LANGS and act == "handoff_language": E(r, "English case labelled handoff_language")
         if act == "link_duplicate" and not r["ticket_ref"]: E(r, "link_duplicate needs ticket_ref")
+        if act == "report_status" and not r["ticket_ref"]: E(r, "report_status needs ticket_ref")   # 311 v4
         if r["ticket_ref"] and r["ticket_ref"] not in ids: E(r, f"ticket_ref {r['ticket_ref']} not in store")
         for c in r["secondary_codes"]:
             if c not in ROUTE: E(r, f"bad secondary code {c}")
@@ -70,10 +71,16 @@ def main(path, db=None):
             if r["trigger_id"] and r["trigger_id"] not in [t[0] for t in spec["e2_triggers"]]:
                 E(r, f"trigger {r['trigger_id']} not a {code} trigger")
             # A value reserved for an E2 trigger must sit on a case with that trigger.
+            # 311 v3: one value can be reserved for several triggers (TR-TREE "fallen limb":
+            # limb_down and hospital_route), so the case may carry any of them.
+            owners = {}
             for tid, tf in p.TRIGGER_FIELD_VALUES.get(code, {}).items():
                 for k, reserved in tf.items():
-                    if f.get(k) in reserved and r["trigger_id"] != tid:
-                        E(r, f"{k}={f[k]!r} is reserved for trigger {tid} (case has {r['trigger_id']})")
+                    for v in reserved:
+                        owners.setdefault((k, v), []).append(tid)
+            for (k, v), tids in owners.items():
+                if f.get(k) == v and r["trigger_id"] not in tids:
+                    E(r, f"{k}={v!r} is reserved for trigger {'/'.join(tids)} (case has {r['trigger_id']})")
         if r["rule_id"] == "E2" and not (r["trigger_id"] and r["hazard_flag"]): E(r, "E2 needs trigger_id and hazard_flag")
         if r["hazard_flag"] and r["rule_id"] not in ("E1", "E2"): E(r, "hazard_flag without E1/E2")
 
