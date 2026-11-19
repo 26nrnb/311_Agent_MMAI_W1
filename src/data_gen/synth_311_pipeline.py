@@ -71,7 +71,7 @@ except Exception:  # pragma: no cover - environment dependent
 #
 # Prompts are versioned so you can track "what changed and why" when you iterate
 # (proposal criterion 8: prompt iteration). Bump this when you edit the prompt.
-PROMPT_VERSION = "311-v4"
+PROMPT_VERSION = "311-v5"
 
 # What changed between prompt versions, and why (rubric: prompt iteration evidence).
 PROMPT_CHANGELOG = [
@@ -117,6 +117,13 @@ PROMPT_CHANGELOG = [
      "private_dumping (EC-15d), both handoff_oos. New emergency: a private tree on a sparking "
      "line (EC-15c). Two-turn edge cases (EC-01b, 02b turn 2, 09b, 24b) are not generated: "
      "single-message data only."),
+    ("311-v5", "2026-11-19", "Pilot review of v4 (60 live messages, 58 kept). Prompt: for AN-DEAD, "
+     "AN-INJ, TR-TREE and IL-DUMP the problem is on public property unless the scenario says "
+     "otherwise (pilot: an injured rabbit 'in my backyard'; private property changes the v1.0 "
+     "outcome). QC: reject an invented street name in the template (pilot: 'Main Street' plus "
+     "the given address) and private-property wording on those four codes. A live run with no "
+     "API key now stops instead of falling back to templates. The ticket store records a "
+     "fingerprint of the catalogue and fixtures and is re-seeded when they change."),
 ]
 
 # The FICTIONAL city the 311 service belongs to. Fictional on purpose: we never
@@ -846,23 +853,38 @@ def seed_ticket_db(path: str, n: int = 400, seed: int = 894) -> int:
     con.executemany(f"INSERT OR REPLACE INTO service_requests VALUES ({','.join('?' * len(TICKET_COLUMNS))})",
                     rows)
     con.executemany("INSERT OR REPLACE INTO store_meta VALUES (?, ?)",
-                    [("as_of", STORE_AS_OF), ("seed", str(seed)), ("n_seeded", str(n))])
+                    [("as_of", STORE_AS_OF), ("seed", str(seed)), ("n_seeded", str(n)),
+                     ("fingerprint", store_fingerprint(n, seed)),           # 311 v5
+                     ("pipeline_version", PROMPT_VERSION)])
     con.commit()
     con.close()
     return len(rows)
 
 
-def ticket_db_is_current(path: str) -> bool:
-    """True if the store exists and has the Interface 7 columns (else re-seed)."""
+def store_fingerprint(n: int = 400, seed: int = 894) -> str:
+    """311 v5: what the seeded store depends on; a change means it must be re-seeded."""
+    basis = {"codes": {c: v["field_values"] for c, v in SERVICE_CODES.items()},
+             "reserved": TRIGGER_FIELD_VALUES, "units": POLICY_UNITS, "fixtures": FIXTURE_TICKETS,
+             "as_of": STORE_AS_OF, "n": n, "seed": seed, "columns": TICKET_COLUMNS}
+    return hashlib.sha1(json.dumps(basis, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+def ticket_db_is_current(path: str, n: int = 400, seed: int = 894) -> bool:
+    """True if the store exists, has the Interface 7 columns and was seeded from the
+    current catalogue and fixtures (311 v5 fingerprint); else it is re-seeded."""
     import sqlite3
     if not Path(path).exists():
         return False
     con = sqlite3.connect(path)
     try:
         cols = [r[1] for r in con.execute("PRAGMA table_info(service_requests)")]
+        try:
+            meta = dict(con.execute("SELECT key, value FROM store_meta").fetchall())
+        except sqlite3.Error:
+            meta = {}
     finally:
         con.close()
-    return cols == TICKET_COLUMNS
+    return cols == TICKET_COLUMNS and meta.get("fingerprint") == store_fingerprint(n, seed)
 
 
 def load_tickets(path: str, include_closed: bool = False) -> List[Dict[str, Any]]:
@@ -1038,7 +1060,7 @@ Hard rules:
    Do not mention rule numbers, service codes or this being test data.
 4. Include ONLY the problem and details given above. Do not add injuries, danger,
    damage to vehicles, a second location, or say it happened before, was reported
-   before, or is the Nth time - unless "what the message must do" says so.
+   before, or is the Nth time - unless "what the message must do" says so.<<PUBLIC_RULE>>
 
 Return ONLY this JSON (no markdown fences, no commentary):
 {"message": "<the resident message, with {placeholders}>",
@@ -1046,6 +1068,24 @@ Return ONLY this JSON (no markdown fences, no commentary):
  "needs_escalation": <true if a human staff member clearly needs to look at this, else false>,
  "contains_pii": <true if the message includes personal data fields, else false>}
 """
+
+
+# 311 v5: Policy v1.0 - private property changes the outcome for these codes (a dead
+# animal there escalates; a tree or dumping there is the owner's, handoff_oos).
+PUBLIC_PROPERTY_CODES = ("AN-DEAD", "AN-INJ", "TR-TREE", "IL-DUMP")
+PUBLIC_RULE = ("\n5. The problem is on public property (street, sidewalk, park, lane, City boulevard). "
+               "Do not place it in a backyard, yard, private driveway, garage or inside a building.")
+PRIVATE_WORDS_RE = re.compile(r"\b(back ?yards?|front yards?|my yard|our yard|(my|our|the) driveway|garage|attic|"
+                              r"inside (my|our|the) (house|home|building|apartment))\b")
+
+
+def must_be_public(job: Dict[str, Any]) -> bool:
+    """True when the scenario's label assumes public property (v5 prompt rule and QC)."""
+    if job.get("service_code") not in PUBLIC_PROPERTY_CODES:
+        return False
+    if job.get("subtype") in ("private_tree", "private_dumping"):
+        return False
+    return job.get("trigger_id") != "private_property"
 
 
 def _topic(job: Dict[str, Any]) -> str:
@@ -1086,6 +1126,7 @@ def build_messages(job: Dict[str, Any]) -> List[Dict[str, str]]:
         .replace("<<CHANNEL>>", job["channel"].replace("_", " "))
         .replace("<<LANGUAGE>>", LANGUAGE_NAMES.get(job["lang"], job["lang"]))
         .replace("<<CODE>>", job["service_code"])
+        .replace("<<PUBLIC_RULE>>", PUBLIC_RULE if must_be_public(job) else "")
     )
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -1137,7 +1178,9 @@ class LLMClient:
 
     def __post_init__(self) -> None:
         if self.api_key is None and not self.offline:
-            self.offline = True
+            # 311 v5: never fall back to templates silently (pilot 1 on Kaggle ran offline).
+            raise ValueError("No OpenRouter API key. Attach the OPENROUTER_API_KEY secret, "
+                             "or pass offline=True for template mode.")
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
 
     # ---- cache helpers ----
@@ -1418,6 +1461,10 @@ PLACEHOLDER_AS_LABEL_RE = re.compile(r"\bmy \{(dob|sin|phone|email|unit|postal_c
 RAW_ADDRESS_RE = re.compile(r"\b\d{1,4}\s+(?:at\s+)?[A-Z][a-z]+\s+(?:" + "|".join(
     ["St", "Ave", "Rd", "Cres", "Dr", "Blvd", "Lane", "Court", "Way", "Street", "Avenue", "Road", "Drive"]) + r")\b"
     r"|\b\d{1,4}\s+(?:at\s+|on\s+)?\{street\}")      # an invented house number before {street}
+# 311 v5: a named street written out instead of a placeholder (pilot: "Main Street near ...").
+_SUFFIX = r"(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Lane|Ln|Court|Ct|Cres|Crescent|Way|Hwy)"
+RAW_STREET_RE = re.compile(r"\b(?!(?:No|Either|Any|By|The|This|That|One|Each|Which|Every|Some|Our|My|Your|Bike|Bus|Cycle|Fire|Parking|Turning|Traffic|Back|Car|Express|Service|Side)\s)"
+                           r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?\s" + _SUFFIX + r"\b")
 # 311: location placeholders, used to check the location instruction was followed
 LOCATION_TOKENS = ("{address}", "{street}", "{cross_street}", "{landmark}")
 
@@ -1503,6 +1550,11 @@ def qc(record: Dict[str, Any], cfg: Optional[Cfg] = None) -> Tuple[bool, List[st
     # 311 v2: addresses must come from placeholders (pilot: a second, invented address).
     if RAW_ADDRESS_RE.search(raw):
         reasons.append("raw_address_in_template")
+    elif RAW_STREET_RE.search(re.sub(r"\{[a-z_]+\}", " ", raw)):      # 311 v5
+        reasons.append("raw_street_in_template")
+    # 311 v5: private-property wording where the label assumes public property.
+    if record.get("lang") == "en" and must_be_public(record) and PRIVATE_WORDS_RE.search(low):
+        reasons.append("private_property_added")
     # 311 v2.1: a placeholder used as a label, e.g. "my {dob} is march 12" (pilot v2, Llama).
     if PLACEHOLDER_AS_LABEL_RE.search(raw):
         reasons.append("placeholder_misused")
@@ -2096,8 +2148,8 @@ def run_pipeline(cfg: Cfg, client: LLMClient, verbose: bool = True) -> Dict[str,
               f"{'OFFLINE' if client.offline else 'LIVE'}")
 
     # 311: the ticket store must exist before sampling (duplicates point at its tickets).
-    # Re-seed if the file is missing or still has the old (pre-Interface 7) columns.
-    if not ticket_db_is_current(cfg.tickets_db):
+    # Re-seed if the file is missing, has old columns, or was seeded from another catalogue (v5).
+    if not ticket_db_is_current(cfg.tickets_db, seed=cfg.seed):
         n_t = seed_ticket_db(cfg.tickets_db, seed=cfg.seed)
         if verbose:
             print(f"Seeded {n_t} synthetic tickets into {cfg.tickets_db}")
@@ -2192,11 +2244,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg = _build_cfg_from_args(args)
 
     api_key, source = load_openrouter_key()
-    offline = args.offline or (api_key is None)
-    if offline and not args.offline:
-        print("OFFLINE: no OPENROUTER_API_KEY found (env / .env / Kaggle secret). "
-              "Running template-only. Set a key to generate with real models.")
-    elif not offline:
+    offline = args.offline
+    if api_key is None and not offline:
+        # 311 v5: a live run without a key stops; use --offline for template mode.
+        raise SystemExit("STOPPED: no OPENROUTER_API_KEY found (Kaggle secret / env / .env). "
+                         "Attach the key, or add --offline for a template-only run.")
+    if not offline:
         print(f"LIVE: key loaded from {source} (hidden). Budget: "
               f"{cfg.max_calls} calls / ${cfg.max_cost_usd:.2f}.")
 
