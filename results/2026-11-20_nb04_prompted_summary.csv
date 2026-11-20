@@ -1,0 +1,5 @@
+Setup,N,Accuracy,Macro-F1,EMERG Recall,OOS Recall,E3 Trigger Rate,P50 Latency (ms),P95 Latency (ms),Cost / 1k Calls ($)
+haiku_zeroshot,343,0.863,0.8557,1.0,0.7576,0.1283,782,2753,0.1452
+haiku_fewshot,343,0.8017,0.83,1.0,0.8485,0.0962,745,2727,0.322
+sonnet_zeroshot,343,0.7901,0.8271,1.0,0.7879,0.242,1189,2277,2.4105
+sonnet_fewshot,343,0.7755,0.8166,1.0,0.8182,0.172,1151,2110,5.971
