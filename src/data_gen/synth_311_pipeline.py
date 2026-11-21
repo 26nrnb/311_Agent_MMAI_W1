@@ -124,6 +124,13 @@ PROMPT_CHANGELOG = [
      "the given address) and private-property wording on those four codes. A live run with no "
      "API key now stops instead of falling back to templates. The ticket store records a "
      "fingerprint of the catalogue and fixtures and is re-seeded when they change."),
+    ("311-v5 (data 5.1)", "2026-11-19", "Prompt unchanged. Full run review (2,823 kept): 141 trigger rows "
+     "over 20 triggers, 5 triggers with no must-escalate row and 5 with no look-alike, so trigger "
+     "recall could not be measured. New append-only top-up (run_trigger_topup, --topup-triggers): "
+     "for every trigger, 4 must-escalate and 3 look-alike scenarios x 3 paraphrases (~420 jobs). "
+     "Existing rows keep their split. New rows are split per trigger and direction (one scenario "
+     "to test, the rest to train) and appended; near-duplicates of existing rows are dropped; "
+     "they carry data_version 5.1 and their own review sheet (review_topup_5.1.csv)."),
 ]
 
 # The FICTIONAL city the 311 service belongs to. Fictional on purpose: we never
@@ -1328,9 +1335,9 @@ def extract_json(text: str) -> Tuple[Optional[dict], Optional[str]]:
     return None, "no JSON object found"
 
 
-def _next_id(counter: List[int]) -> str:
+def _next_id(counter: List[int], prefix: str = "rec") -> str:
     counter[0] += 1
-    return f"rec_{counter[0]:05d}"
+    return f"{prefix}_{counter[0]:05d}"
 
 
 def generate_record(job: Dict[str, Any], client: LLMClient) -> Dict[str, Any]:
@@ -1669,7 +1676,7 @@ def _scenario(difficulty: str, subtype: str, spec: Dict[str, Any], rng: random.R
                          "location_style": rng.choice(LOCATION_STYLES), "location_override": None,
                          "trigger_id": None, "ticket_ref": None}
     code = spec.get("code") or pick()
-    if subtype in ("e2_trigger", "e2_look_alike", "trigger_vague_location"):
+    if subtype in ("e2_trigger", "e2_look_alike", "trigger_vague_location") and not spec.get("code"):
         code = next(c for c in iter(lambda: rng.choices(codes, weights)[0], None)
                     if c in TRIGGER_CODES)                      # 311 v4: SW-MISS has none
     dup_ticket = None
@@ -1712,7 +1719,10 @@ def _scenario(difficulty: str, subtype: str, spec: Dict[str, Any], rng: random.R
             # 311: same issue as the ticket, so the match fields (bin_type, ...) agree.
             fields.update(dup_ticket["fields"])
         if subtype in ("e2_trigger", "e2_look_alike", "trigger_vague_location"):
-            tid, trig, look = rng.choice(SERVICE_CODES[code]["e2_triggers"])
+            if spec.get("trigger"):                    # data 5.1: top-up forces the trigger
+                tid, trig, look = next(x for x in SERVICE_CODES[code]["e2_triggers"] if x[0] == spec["trigger"])
+            else:
+                tid, trig, look = rng.choice(SERVICE_CODES[code]["e2_triggers"])
             t["trigger_id"], t["extra"]["trigger"], t["extra"]["look_alike"] = tid, trig, look
             if subtype == "trigger_vague_location":   # 311 v4: EC-02b, location left out
                 t["omitted"] = ["location"]
@@ -1776,7 +1786,17 @@ def sample_jobs(n: int, cfg: Optional[Cfg] = None,
             for _ in range(n_s):
                 templates.append(_scenario(difficulty, subtype, SCENARIOS[difficulty][subtype], rng, open_tickets))
     rng.shuffle(templates)
+    return _expand_templates(templates, n, cfg, rng, open_tickets)
 
+
+def _expand_templates(templates: List[Dict[str, Any]], n: int, cfg: Cfg, rng: random.Random,
+                      open_tickets: List[Dict[str, Any]], id_prefix: str = "rec") -> List[Dict[str, Any]]:
+    """Write each template `per_template` times (persona, channel, language, model,
+    temperature). Shared by sample_jobs and the data 5.1 trigger top-up."""
+    models, temps = list(cfg.models), list(cfg.temperatures)
+    langs = [l for l in cfg.languages if l in cfg.language_weights]
+    lweights = [cfg.language_weights[l] for l in langs]
+    k_per = max(1, cfg.per_template)
     jobs: List[Dict[str, Any]] = []
     counter = [0]
     k = 0
@@ -1794,7 +1814,7 @@ def sample_jobs(n: int, cfg: Optional[Cfg] = None,
                 action, rule = "handoff_language", "M6"     # policy M6; safety actions are kept
             job = dict(t)
             job.update({
-                "id": _next_id(counter),
+                "id": _next_id(counter, id_prefix),
                 "expected_action": action,
                 "rule_id": rule,
                 "persona": rng.choice([p_ for p_ in PERSONAS if lang == "en"
@@ -2133,6 +2153,125 @@ def write_manifest(path: str, cfg: Cfg, summary: Dict[str, Any],
 
 
 # =============================================================================
+# 14b. TRIGGER TOP-UP (data 5.1, append-only)
+# =============================================================================
+TOPUP_VERSION = "5.1"
+
+
+def trigger_topup_jobs(cfg: Cfg, n_pos: int = 4, n_neg: int = 3,
+                       exclude_templates: Optional[set] = None) -> List[Dict[str, Any]]:
+    """Jobs for n_pos must-escalate and n_neg look-alike scenarios of EVERY trigger."""
+    rng = random.Random(cfg.seed + 51)
+    open_tickets = load_open_tickets(cfg.tickets_db)
+    seen = set(exclude_templates or ())
+    templates: List[Dict[str, Any]] = []
+    for code in TRIGGER_CODES:
+        for tid, _, _ in SERVICE_CODES[code]["e2_triggers"]:
+            for subtype, want in (("e2_trigger", n_pos), ("e2_look_alike", n_neg)):
+                made = tries = 0
+                while made < want and tries < 60:
+                    tries += 1
+                    spec = dict(SCENARIOS["hard"][subtype], code=code, trigger=tid)
+                    t = _scenario("hard", subtype, spec, rng, open_tickets)
+                    if t["template_id"] in seen:
+                        continue
+                    seen.add(t["template_id"])
+                    templates.append(t)
+                    made += 1
+    rng.shuffle(templates)
+    jobs = _expand_templates(templates, len(templates) * max(1, cfg.per_template), cfg, rng,
+                             open_tickets, id_prefix="t51")
+    for j in jobs:
+        j["data_version"] = TOPUP_VERSION
+    return jobs
+
+
+def run_trigger_topup(cfg: Cfg, client: "LLMClient", n_pos: int = 4, n_neg: int = 3,
+                      force: bool = False, verbose: bool = True) -> Dict[str, Any]:
+    """Append trigger rows to an existing run in cfg.out_dir without moving any old row.
+
+    Old rows keep their train/test/sealed assignment. New rows are near-dup checked
+    against all old rows, split among themselves (grouped by template) and appended.
+    """
+    out = Path(cfg.out_dir)
+    man_path = out / "run_manifest.json"
+    if not man_path.exists():
+        raise FileNotFoundError(f"No run in {out}: run the full generation first.")
+    manifest = json.loads(man_path.read_text(encoding="utf-8"))
+    if any(t.get("data_version") == TOPUP_VERSION for t in manifest.get("topups", [])) and not force:
+        raise RuntimeError(f"Top-up {TOPUP_VERSION} is already in {out} (pass force=True to add again).")
+
+    old = {n: pd.read_json(out / f"{n}.jsonl", lines=True)
+           for n in ("raw", "kept", "rejected", "train", "test")}
+    if not ticket_db_is_current(cfg.tickets_db, seed=cfg.seed):
+        seed_ticket_db(cfg.tickets_db, seed=cfg.seed)
+    jobs = trigger_topup_jobs(cfg, n_pos, n_neg, exclude_templates=set(old["raw"]["template_id"]))
+    if verbose:
+        print(f"Top-up {TOPUP_VERSION}: {len(jobs)} jobs for {len(TRIGGER_CODES)} codes / "
+              f"{sum(len(SERVICE_CODES[c]['e2_triggers']) for c in TRIGGER_CODES)} triggers. "
+              f"Mode: {'OFFLINE' if client.offline else 'LIVE'}")
+    res = generate_dataset(jobs, client, cfg, verbose=verbose)
+    raw_new, kept_new, rej_new = res["raw"], res["kept"].copy(), res["rejected"].copy()
+
+    # Near-duplicates of rows already in the dataset are dropped (keeps the old split clean).
+    if len(kept_new) and len(old["kept"]):
+        mask = _cross_dup_mask(kept_new["message"].astype(str).tolist(),
+                               old["kept"]["message"].astype(str).tolist(), cfg.dup_threshold)
+        if mask.any():
+            dups = kept_new[mask].copy()
+            dups["qc_ok"] = False
+            dups["qc_reasons"] = dups["qc_reasons"].apply(lambda r: (r or []) + ["near_duplicate_existing"])
+            rej_new = pd.concat([rej_new, dups], ignore_index=True)
+            kept_new = kept_new[~mask].copy()
+            raw_new.loc[raw_new["id"].isin(dups["id"]), "qc_ok"] = False
+
+    for df in (raw_new, kept_new, rej_new):
+        if len(df):
+            df["data_version"] = TOPUP_VERSION
+
+    # Stratified split: for every trigger and direction (must-escalate / look-alike), one
+    # scenario goes to test and the rest to train, so recall is measurable per trigger.
+    srng = random.Random(cfg.seed + 52)
+    test_tpl = set()
+    for _, g in kept_new.groupby(["service_code", "trigger_id", "subtype"]):
+        tpls = sorted(g["template_id"].unique())
+        if len(tpls) >= 2:
+            test_tpl.add(srng.choice(tpls))
+    test_new = kept_new[kept_new["template_id"].isin(test_tpl)].copy()
+    train_new = kept_new[~kept_new["template_id"].isin(test_tpl)].copy()
+    # A new train row that near-duplicates any test row (old or new) is dropped.
+    mask = _cross_dup_mask(train_new["message"].astype(str).tolist(),
+                           pd.concat([old["test"], test_new])["message"].astype(str).tolist(),
+                           cfg.dup_threshold)
+    dropped = train_new[mask]
+    train_new = train_new[~mask].copy()
+    train_new["split"], test_new["split"] = "train", "test"
+    kept_new = kept_new[kept_new["id"].isin(set(train_new["id"]) | set(test_new["id"]))]
+
+    for name, add in (("raw", raw_new), ("kept", kept_new), ("rejected", rej_new),
+                      ("train", train_new), ("test", test_new)):
+        save_jsonl(pd.concat([old[name], add], ignore_index=True), str(out / f"{name}.jsonl"))
+    review_path = out / f"review_topup_{TOPUP_VERSION}.csv"
+    export_review_csv(test_new, str(review_path))       # review.csv is left as it is
+
+    entry = {"data_version": TOPUP_VERSION, "date": time.strftime("%Y-%m-%d"),
+             "prompt_version": PROMPT_VERSION, "n_jobs": len(jobs), "n_kept": int(len(kept_new)),
+             "n_rejected": int(len(rej_new)), "n_train": int(len(train_new)),
+             "n_test": int(len(test_new)), "n_dropped_cross_split_dup": int(len(dropped)),
+             "live_calls": client.budget.calls_made,
+             "cost_usd": round(client.budget.cost_spent, 6), "offline": client.offline}
+    manifest.setdefault("topups", []).append(entry)
+    manifest["totals"] = {n: int(len(old[n]) + len(a)) for n, a in
+                          (("kept", kept_new), ("rejected", rej_new), ("train", train_new), ("test", test_new))}
+    man_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    if verbose:
+        print(f"  added {len(kept_new)} rows (train {len(train_new)}, test {len(test_new)}), "
+              f"rejected {len(rej_new)}, cost ${client.budget.cost_spent:.4f}")
+        print(f"  totals: {manifest['totals']}; new rows for review: {review_path}")
+    return entry
+
+
+# =============================================================================
 # 15. END-TO-END RUN + CLI
 # =============================================================================
 def run_pipeline(cfg: Cfg, client: LLMClient, verbose: bool = True) -> Dict[str, Any]:
@@ -2233,6 +2372,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="folder of hand-written test inputs (*.txt, one per line) to keep out of training")
     p.add_argument("--per-template", type=int, default=Cfg.per_template,
                    help="paraphrases (personas) per scenario template")
+    p.add_argument("--topup-triggers", action="store_true",
+                   help="data 5.1: append trigger rows to the run in --out (old rows keep their split)")
     p.add_argument("--seal-adversarial", action="store_true",
                    help="move adversarial test rows to <sealed-dir>/adversarial_sealed.jsonl")
     p.add_argument("--sealed-dir", default=DEFAULT_PROTECTED_DIR,
@@ -2258,7 +2399,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                                      max_cost_usd=cfg.max_cost_usd),
                        timeout=cfg.timeout, max_retries=cfg.max_retries)
 
-    run_pipeline(cfg, client, verbose=True)
+    if args.topup_triggers:                                     # data 5.1
+        run_trigger_topup(cfg, client, verbose=True)
+    else:
+        run_pipeline(cfg, client, verbose=True)
     return 0
 
 
