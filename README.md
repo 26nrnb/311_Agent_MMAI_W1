@@ -224,7 +224,7 @@ The agent never hard-codes a category, so a new one is mostly configuration:
 - [docs/architecture.md](docs/architecture.md): how a turn flows through the system.
 - [docs/architecture_diagram.html](docs/architecture_diagram.html): the whole site as a swim-lane diagram (open in a browser).
 - [docs/decisions.md](docs/decisions.md): what we chose and why.
-- [docs/metrics 2.md](docs/metrics%202.md) and [docs/results_format 1.md](docs/results_format%201.md): what we measure, the go thresholds, and the results file columns.
+- [docs/metrics.md](docs/metrics.md) and [docs/results_format.md](docs/results_format.md): what we measure, the go thresholds, and the results file columns.
 - [docs/evaluation.md](docs/evaluation.md): the eval harness, `make reproduce`, and how a case is scored.
 - [docs/demo_cases.md](docs/demo_cases.md): the five scripted demo cases.
 - [docs/deployment.md](docs/deployment.md): running behind Cloudflare Tunnel.

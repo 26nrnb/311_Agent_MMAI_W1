@@ -44,6 +44,9 @@ pii:
   date_of_birth: '\b(born|dob|date of birth)\b[^.\n]{0,25}\d'
   phone: '(?<!\d)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\d)'
   email: '[\w.+-]+@[\w-]+\.[\w.-]+'
+  # Policy v1.0 D6: logs mask postal codes after the first three characters, so a whole
+  # postal code in a log is a leak (in a reply, only one the resident did not give).
+  postal_code: '\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b'
 
 # Policy rules a pattern can check (the judge checks the rest)
 policy:

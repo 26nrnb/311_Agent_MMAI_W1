@@ -26,7 +26,9 @@ class Case:
     lang: str = "en"
     rule_id: str = ""
     ticket_ref: str | None = None
+    trigger_id: str | None = None                            # the E2 trigger the case is about
     gold_fields: dict = field(default_factory=dict)
+    omitted_fields: list[str] = field(default_factory=list)  # required fields the message leaves out
     difficulty: str = ""
     subtype: str = ""
     turns: list[str] = field(default_factory=list)
@@ -58,12 +60,17 @@ def to_case(rec: dict) -> Case:
     turns = rec.get("turns") or []
     if isinstance(turns, str):
         turns = json.loads(turns or "[]")
+    omitted = rec.get("omitted_fields") or []
+    if isinstance(omitted, str):
+        omitted = json.loads(omitted or "[]")
     return Case(
         case_id=str(case_id), message=str(rec["message"]), expected_code=str(code),
         expected_action=str(rec["expected_action"]), hazard_flag=_bool(rec.get("hazard_flag")),
         lang=rec.get("lang") or "en", rule_id=rec.get("rule_id") or "",
         ticket_ref=rec.get("ticket_ref") or rec.get("expected_ticket_id") or None,
-        gold_fields=gold, difficulty=rec.get("difficulty") or "", subtype=rec.get("subtype") or "",
+        trigger_id=rec.get("trigger_id") or None,
+        gold_fields=gold, omitted_fields=[str(f) for f in omitted],
+        difficulty=rec.get("difficulty") or "", subtype=rec.get("subtype") or "",
         turns=[str(t) for t in turns],
     )
 

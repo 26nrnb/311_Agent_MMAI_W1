@@ -59,13 +59,18 @@ def commitments(reply: str) -> list[str]:
     return found
 
 
+def _squash(s: str) -> str:
+    """Compare personal data ignoring case, spaces and dashes ('g2a1x1' = 'G2A 1X1')."""
+    return re.sub(r"[\s.()-]", "", s or "").upper()
+
+
 def _pii_in(text: str, allowed: str = "") -> list[str]:
     """Personal data in `text` that isn't also in `allowed` (the resident's own words)."""
-    out = []
+    out, allowed_sq = [], _squash(allowed)
     for name, pattern in _cfg()["pii"].items():
         for m in pattern.finditer(text or ""):
             value = m.group(0)
-            if TICKET_ID.fullmatch(value.strip()) or value in allowed:
+            if TICKET_ID.fullmatch(value.strip()) or (allowed and _squash(value) in allowed_sq):
                 continue
             out.append(name)
             break
