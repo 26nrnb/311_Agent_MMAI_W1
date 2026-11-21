@@ -122,3 +122,14 @@ def test_route_lookup_is_offered_to_the_model_but_not_as_a_ticket_code():
     state = RuleState()
     record(state, "policy_lookup", {"code": "OOS"}, policy_lookup("OOS"))
     assert state.looked_up == set() and state.code is None   # A2 still needs a catalogue lookup
+
+
+def test_create_ticket_refuses_a_case_the_city_does_not_handle(fresh_store):
+    fields = {"location": "12 Oak Street", "city_or_private_tree": "Private tree", "what_is_wrong": "needs pruning"}
+    out = create_ticket("TR-TREE", fields)
+    assert not out["ok"] and out["not_handled"] == "private_tree" and out["outcome"] == "handoff_oos"
+    assert "redirect_911 if it is a danger now" in out["error"] and fresh_store.tickets == []
+    # refused before asking for the rest: a private tree never gets a ticket
+    assert create_ticket("TR-TREE", {"city_or_private_tree": "private tree"})["not_handled"] == "private_tree"
+    # a City tree is still filed
+    assert create_ticket("TR-TREE", {**fields, "city_or_private_tree": "park tree"})["ok"]

@@ -31,6 +31,7 @@ class RuleState:
     status_found: bool = False                              # get_status found the ticket (A12)
     kb_answered: bool = False                               # kb_search returned an article (A13)
     linked_id: str | None = None                            # open ticket a reply named (C6)
+    not_handled: str | None = None                          # outcome of a case create_ticket refused (A8)
     fired: set[str] = field(default_factory=set)            # rules the tree fired
     wordings: set[str] = field(default_factory=set)         # approved wordings the replies used
 
@@ -69,6 +70,8 @@ def record(state: RuleState, name: str, args: dict, result: dict) -> None:
             state.known_ids.add(result["ticket_id"])
         for f in result.get("missing") or []:
             state.field_attempts[f] = state.field_attempts.get(f, 0) + 1
+        if result.get("not_handled"):
+            state.not_handled = result.get("outcome") or "handoff_oos"
     elif name == "get_status" and result.get("ok"):
         state.known_ids.add(result["ticket_id"])
         state.status_found = True

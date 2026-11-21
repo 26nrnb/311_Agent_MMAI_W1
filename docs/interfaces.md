@@ -41,7 +41,7 @@ Each returns a dict with `ok` (bool) and `error` (str or None).
 |---|---|---|
 | `policy_lookup(code)` | catalogue code: code, category, unit, required_fields, field_options, escalation_triggers, duplicate_window, not_handled (cases not to ticket). Route code (EMERG, OOS): code, route, no_ticket, name, outcome, rules, sent_when, look_alikes, other_services (OOS), wording (the approved reply text); `create_ticket` refuses a route | A2, A8 |
 | `search_tickets(location, code=None, days=None)` | tickets: [{ticket_id, code, status, date_opened}] (nothing else, D3) | A3 |
-| `create_ticket(code, fields)` | ticket_id, code, category, unit, location. On missing fields: ok False, `missing: [...]` | A4 |
+| `create_ticket(code, fields)` | ticket_id, code, category, unit, location. On missing fields: ok False, `missing: [...]`. A route code (EMERG, OOS) or a `not_handled` case whose field values match (a private tree): ok False, `not_handled: <id>`, `outcome` | A4, A8 |
 | `get_status(ticket_id, postal_code)` | ticket_id, code, status, unit, date_opened | A5, D5 |
 | `handoff(rule_id, package)` | ref_id, rule_id. Package: interaction_id, code, confidence, fields, transcript, possible_duplicates, reason (masked on write) | A6 |
 | `kb_search(query, top_k=None)` **proposed** | passages: [{title, source, text}] | C5 |

@@ -39,8 +39,19 @@ def search_tickets(location: str, code: str | None = None, days: int | None = No
     return {"ok": True, "error": None, "tickets": tickets}
 
 
+def _not_handled(pol: dict, fields: dict) -> dict | None:
+    """A8 [hard]: the catalogue case these fields fall under that the City doesn't handle, if any.
+    Only cases that list field values can be checked here; the others rely on the model."""
+    for case in pol.get("not_handled") or []:
+        for name, values in (case.get("values") or {}).items():
+            if str(fields.get(name, "")).strip().lower() in {str(v).strip().lower() for v in values}:
+                return case
+    return None
+
+
 def create_ticket(code: str, fields: dict, interaction_id: str | None = None) -> dict:
     """A4 [hard]: refuses unless the code exists and every required field is present.
+    A8 [hard]: refuses route codes (EMERG, OOS) and cases the catalogue marks not_handled.
     interaction_id is filled in by the orchestrator (not the model) so /admin can
     link the ticket to its conversation."""
     pol = policy_lookup(code)
@@ -49,6 +60,12 @@ def create_ticket(code: str, fields: dict, interaction_id: str | None = None) ->
     if pol.get("route"):   # EMERG, OOS (A8)
         return {"ok": False, "error": f"{pol['code']} never creates a ticket; outcome {pol.get('outcome')} (A8)"}
     fields = {k: redact(str(v))[0] for k, v in (fields or {}).items() if v not in (None, "")}  # D2
+    case = _not_handled(pol, fields)
+    if case:
+        danger = f", or {case['danger_now']} if it is a danger now" if case.get("danger_now") else ""
+        return {"ok": False, "error": f"{pol['code']} doesn't handle this: {case.get('description', case['id'])}. "
+                                      f"No ticket; outcome {case.get('outcome', 'handoff_oos')}{danger} (A8)",
+                "not_handled": case["id"], "outcome": case.get("outcome", "handoff_oos")}
     missing = [f for f in pol["required_fields"] if not fields.get(f)]
     if missing:
         return {"ok": False, "error": f"missing required fields: {', '.join(missing)} (A4)", "missing": missing}

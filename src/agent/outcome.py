@@ -13,6 +13,8 @@ label, in this order (the first that applies wins):
   3. two or more tickets created                                    handle_each
   4. one ticket created (a genuine request with hidden
      instructions is still a ticket, S5)                            create_ticket
+     create_ticket refused a case the catalogue doesn't handle
+     (A8, a private tree)                                           its outcome (handoff_oos)
   5. a reply named an open ticket search_tickets returned, or used
      the possible_duplicate wording (C6)                            link_duplicate
   6. get_status found the resident's ticket (A12)                   report_status
@@ -79,6 +81,8 @@ def outcome(state: RuleState, reply: str) -> str | None:
         return "handle_each"
     if state.ticket_ids:
         return "create_ticket"
+    if state.not_handled in OUTCOMES:
+        return state.not_handled
     if state.linked_id or "possible_duplicate" in state.wordings:
         return "link_duplicate"
     if state.status_found:

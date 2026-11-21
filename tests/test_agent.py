@@ -187,3 +187,13 @@ def test_outcome_rules_on_state():
     assert outcome(RuleState(fired={"E1"}, handed_off=True, handoff_rule="M6"), "x") == "redirect_911"
     from src.eval.outcome import OUTCOMES as GRADER
     assert set(OUTCOMES) == set(GRADER)
+
+
+def test_outcome_when_create_ticket_refuses_a_not_handled_case(llm, sel, fresh_store):
+    llm([tool_call("policy_lookup", {"code": "TR-TREE"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "TR-TREE"})],
+        [tool_call("create_ticket", {"code": "TR-TREE", "fields": {
+            "location": "12 Oak Street", "city_or_private_tree": "private tree", "what_is_wrong": "needs pruning"}})],
+        "A tree on private property is the owner's responsibility, so I can't file a request for it.")
+    handle_turn(None, "The tree in my backyard at 12 Oak Street needs pruning", sel)
+    assert fresh_store.tickets == [] and _outcomes(fresh_store) == ["handoff_oos"]
