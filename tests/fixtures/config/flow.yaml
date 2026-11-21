@@ -9,7 +9,7 @@
 # enabled: false skips a node (a decision then takes its "no" branch).
 # The checks and actions available are listed in /admin; adding a new kind
 # needs code in src/agent/flow.py.
-version: 1
+version: 1.1
 
 hooks:
   message: redacted              # a resident message arrives, before the model sees it
