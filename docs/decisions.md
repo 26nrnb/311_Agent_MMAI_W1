@@ -156,4 +156,9 @@ alternatives, and why. The report draws on this file directly.
 
 * **Chose:** every tool result carries `error_code` next to `ok` and `error`, with the rest of the result still at the top level, as section 3 of the 311 Interfaces doc locks (not a `data` wrapper). Codes are the doc's eight plus three the doc's list doesn't cover: `not_handled` (A8), `blocked` (a flow check stopped the call) and `bad_arguments` (A9). The orchestrator logs the code to `interaction_events.error_code`.
 * **Why:** failures can be counted by kind without parsing the error text, and keeping results at the top level means the guardrail tests and the eval harness that read `ticket_id`, `missing` and the rest keep working.
-* **Not yet:** `pii_rejected` is defined but unused, since D2 redacts PII in fields instead of refusing; `invalid_value` isn't raised for closed field values, because `create_ticket` doesn't check `field_options`.
+* **Not yet:** `pii_rejected` is defined but unused, since D2 redacts PII in fields instead of refusing. `invalid_value` for closed fields: see D-026.
+
+## D-026 create_ticket checks closed field values (2026-11-21)
+
+* **Chose:** `create_ticket` refuses a closed field (any field with `field_options` in policy.yaml, required or optional) whose value isn't one of its values, with `error_code: invalid_value`, the fields in `invalid` and their allowed values in `allowed`. Matching ignores case and spaces, and the stored value is the policy's spelling. Values reserved for escalation triggers and `not_handled` cases also pass, since those rules handle them. An invalid field also counts as `missing`, like a vague location (A11), so E6 hands off after two tries.
+* **Why:** policy v1.0 says `field_options` lists the closed values for every closed field, matching the data pipeline; tickets with other values wouldn't match seeded tickets or the eval's gold fields.

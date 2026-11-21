@@ -64,3 +64,18 @@ def test_tool_error_code_is_logged_on_the_event(llm, sel, fresh_store):
     tool = {e["step"]: e for e in fresh_store.events if e["step"].startswith("tool:")}
     assert tool["tool:create_ticket"]["error_code"] == "unavailable"
     assert "error_code" not in tool["tool:policy_lookup"]          # only set on errors
+
+
+def test_e6_invalid_closed_value_after_two_attempts(llm, sel, fresh_store):
+    wrong = {**BIN_FIELDS, "bin_type": "blue box"}
+    llm(
+        [tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
+        [tool_call("create_ticket", {"code": "SW-BIN", "fields": wrong}, "a")],
+        [tool_call("create_ticket", {"code": "SW-BIN", "fields": wrong}, "b")],
+        [tool_call("create_ticket", {"code": "SW-BIN", "fields": wrong}, "c")],
+    )
+    out = handle_turn(None, "bin broken", sel)
+    assert out["rule_id"] == "E6" and fresh_store.handoffs and not fresh_store.tickets
+    codes = [e.get("error_code") for e in fresh_store.events if e["step"] == "tool:create_ticket"]
+    assert "invalid_value" in codes

@@ -192,3 +192,34 @@ def test_policy_unavailable(monkeypatch):
     monkeypatch.setattr(pmod, "policy", broken)
     assert policy_lookup("SW-BIN")["error_code"] == "policy_unavailable"
     assert create_ticket("SW-BIN", BIN)["error_code"] == "policy_unavailable"
+
+
+def test_a4_closed_field_value_must_be_in_field_options(fresh_store):
+    r = create_ticket("SW-BIN", {**BIN, "bin_type": "blue box"})
+    assert not r["ok"] and r["error_code"] == "invalid_value"
+    assert r["invalid"] == ["bin_type"] and r["missing"] == ["bin_type"]       # counts toward E6
+    assert "recycling" in r["allowed"]["bin_type"] and "blue box" in r["error"]
+    assert not fresh_store.tickets
+
+
+def test_closed_values_match_any_case_and_are_stored_as_the_policy_spells_them(fresh_store):
+    r = create_ticket("SW-BIN", {**BIN, "bin_type": " Recycling ", "damage_type": "Cracked Lid"})
+    assert r["ok"]
+    stored = fresh_store.tickets[0]["fields"]
+    assert stored["bin_type"] == "recycling" and stored["damage_type"] == "cracked lid"
+
+
+def test_free_text_and_optional_closed_fields():
+    # location has no field_options, so any usable address passes; an optional closed field is checked too
+    dump = {"location": "40 Elm Street", "material_type": "sofa"}
+    assert create_ticket("IL-DUMP", {**dump, "public_or_private_land": "public land"})["ok"]
+    assert create_ticket("IL-DUMP", {**dump, "public_or_private_land": "the moon"})["error_code"] == "invalid_value"
+
+
+def test_reserved_trigger_and_not_handled_values_are_not_invalid():
+    # dog is a trigger value (E2 hands off before the tool runs); private tree is a not_handled case (A8)
+    assert create_ticket("AN-INJ", {"location": "5 Pine Road", "animal_type": "dog",
+                                    "condition": "limping"})["error_code"] != "invalid_value"
+    r = create_ticket("TR-TREE", {"location": "5 Pine Road", "city_or_private_tree": "private tree",
+                                  "what_is_wrong": "needs pruning"})
+    assert r["error_code"] == "not_handled"

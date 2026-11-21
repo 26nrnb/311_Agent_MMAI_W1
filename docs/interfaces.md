@@ -48,7 +48,7 @@ result at the top level (`src/tools/errors.py`):
 |---|---|---|
 | `policy_lookup(code)` | catalogue code: code, category, unit, required_fields, field_options, escalation_triggers, duplicate_window, not_handled (cases not to ticket). Route code (EMERG, OOS): code, route, no_ticket, name, outcome, rules, sent_when, look_alikes, other_services (OOS), wording (the approved reply text); `create_ticket` refuses a route | A2, A8 |
 | `search_tickets(location, code=None, days=None)` | tickets: [{ticket_id, code, status, date_opened}] (nothing else, D3) | A3 |
-| `create_ticket(code, fields)` | ticket_id, code, category, unit, location. On missing fields: ok False, `missing: [...]`. A route code (EMERG, OOS) or a `not_handled` case whose field values match (a private tree): ok False, `not_handled: <id>`, `outcome` | A4, A8 |
+| `create_ticket(code, fields)` | ticket_id, code, category, unit, location. On missing fields: ok False, `missing: [...]`. A closed field (`field_options`) must hold one of its values, matched ignoring case and stored as the policy spells it; values reserved for escalation triggers and `not_handled` cases also pass. A route code (EMERG, OOS) or a `not_handled` case whose field values match (a private tree): ok False, `not_handled: <id>`, `outcome` | A4, A8 |
 | `get_status(ticket_id, postal_code)` | ticket_id, code, status, unit, date_opened | A5, D5 |
 | `handoff(rule_id, package)` | ref_id, rule_id. Package: interaction_id, code, confidence, fields, transcript, possible_duplicates, reason (masked on write) | A6 |
 | `kb_search(query, top_k=None)` **proposed** | passages: [{title, source, text}] | C5 |
@@ -62,7 +62,7 @@ before the model sees the result, retries once (F1) and then hands off (E9).
 | `unknown_code` | Code not in the catalogue or routes, or EMERG/OOS passed to `create_ticket` |
 | `missing_argument` | No location, query, ticket number or postal code |
 | `missing_fields` | A required policy field is empty, or the location is too vague (A11); `missing` lists them |
-| `invalid_value` | A value that isn't allowed, e.g. an unknown handoff `rule_id` |
+| `invalid_value` | A closed field's value isn't in its `field_options` (`create_ticket`: `invalid` names the fields, `allowed` their values, and they count as `missing` for E6), or an unknown handoff `rule_id` |
 | `pii_rejected` | Defined, not used yet: D2 redacts PII in fields rather than refusing |
 | `not_found` | Ticket number and postal code don't match a ticket (same reply either way, D5) |
 | `policy_unavailable` | policy.yaml couldn't be read (F4) |

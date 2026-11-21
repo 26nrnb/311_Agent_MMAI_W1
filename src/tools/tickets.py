@@ -57,9 +57,39 @@ def _not_handled(pol: dict, fields: dict) -> dict | None:
     return None
 
 
+def _allowed_values(pol: dict) -> dict[str, list[str]]:
+    """Closed fields and their values: field_options, plus the values reserved for escalation
+    triggers and not_handled cases (those mean a rule fires, but they are not invalid)."""
+    allowed = {f: list(v) for f, v in (pol.get("field_options") or {}).items()}
+    for item in (pol.get("escalation_triggers") or []) + (pol.get("not_handled") or []):
+        if isinstance(item, dict):
+            for f, values in (item.get("values") or {}).items():
+                if f in allowed:
+                    allowed[f] += [v for v in values if v not in allowed[f]]
+    return allowed
+
+
+def _check_values(pol: dict, fields: dict) -> dict[str, list[str]]:
+    """Closed fields whose value isn't allowed, with the allowed values. Allowed values are
+    rewritten in place to the policy's spelling ("Recycling" -> "recycling")."""
+    invalid = {}
+    for name, values in _allowed_values(pol).items():
+        if name not in fields:
+            continue
+        canonical = {str(v).strip().lower(): v for v in values}
+        given = str(fields[name]).strip().lower()
+        if given in canonical:
+            fields[name] = canonical[given]
+        else:
+            invalid[name] = list(pol["field_options"][name])
+    return invalid
+
+
 def create_ticket(code: str, fields: dict, interaction_id: str | None = None) -> dict:
     """A4 [hard]: refuses unless the code exists and every required field is present.
     A8 [hard]: refuses route codes (EMERG, OOS) and cases the catalogue marks not_handled.
+    A4 [hard]: refuses a closed field (field_options) whose value isn't one of its values;
+    the field counts as missing, so E6 hands off after two tries.
     A11 [hard]: refuses a location that is no street address, intersection or landmark on a
     street; it counts as a missing field, so E6 hands off after two tries.
     interaction_id is filled in by the orchestrator (not the model) so /admin can
@@ -83,6 +113,11 @@ def create_ticket(code: str, fields: dict, interaction_id: str | None = None) ->
                     missing=["location"] + [f for f in missing if f != "location"])
     if missing:
         return fail("missing_fields", f"missing required fields: {', '.join(missing)} (A4)", missing=missing)
+    invalid = _check_values(pol, fields)
+    if invalid:
+        detail = "; ".join(f"{f} {fields[f]!r} is not one of: {', '.join(v)}" for f, v in invalid.items())
+        return fail("invalid_value", f"not an allowed value: {detail}. Ask the resident which one fits (A4)",
+                    invalid=list(invalid), allowed=invalid, missing=list(invalid))
     location = _location(fields)
     contact = {k: fields.pop(k) for k in ("name", "phone", "email") if k in fields}
     row = {
