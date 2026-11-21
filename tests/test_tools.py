@@ -87,3 +87,38 @@ def test_kb_bulk_import(fresh_store, tmp_path):
     assert import_files(fresh_store, tmp_path) == 1
     chunk_stale(fresh_store)
     assert kb_search("park washrooms")["passages"][0]["title"] == "Parks"
+
+
+def test_policy_lookup_lists_cases_not_to_ticket():
+    tree = policy_lookup("TR-TREE")
+    assert [c["id"] for c in tree["not_handled"]] == ["private_tree"]
+    assert tree["not_handled"][0]["outcome"] == "handoff_oos"
+    assert policy_lookup("SW-BIN")["not_handled"] == []
+
+
+def test_policy_lookup_routes_give_the_outcome_and_approved_reply():
+    from src.config import policy
+    oos = policy_lookup("oos")
+    assert oos["ok"] and oos["route"] and oos["no_ticket"] and oos["outcome"] == "handoff_oos"
+    assert oos["wording"] == policy()["wording"]["out_of_scope"]
+    assert {"request": "Streetlight out", "route": "OOS"} in oos["other_services"]
+    emerg = policy_lookup("EMERG")
+    assert emerg["outcome"] == "redirect_911" and emerg["wording"] == policy()["wording"]["emergency"]
+    assert "required_fields" not in emerg and "patterns" not in emerg
+
+
+def test_routes_never_create_a_ticket(fresh_store):
+    from src.tools.tickets import create_ticket
+    out = create_ticket("OOS", {"location": "12 Oak Street"})
+    assert not out["ok"] and "never creates a ticket" in out["error"] and fresh_store.tickets == []
+
+
+def test_route_lookup_is_offered_to_the_model_but_not_as_a_ticket_code():
+    from src.agent.rules import RuleState, record
+    from src.tools.registry import tool_schemas
+    schemas = {s["function"]["name"]: s["function"]["parameters"]["properties"] for s in tool_schemas()}
+    assert {"EMERG", "OOS"} <= set(schemas["policy_lookup"]["code"]["enum"])
+    assert "OOS" not in schemas["create_ticket"]["code"]["enum"]
+    state = RuleState()
+    record(state, "policy_lookup", {"code": "OOS"}, policy_lookup("OOS"))
+    assert state.looked_up == set() and state.code is None   # A2 still needs a catalogue lookup

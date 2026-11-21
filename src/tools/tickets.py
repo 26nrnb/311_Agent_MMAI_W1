@@ -46,6 +46,8 @@ def create_ticket(code: str, fields: dict, interaction_id: str | None = None) ->
     pol = policy_lookup(code)
     if not pol["ok"]:
         return pol
+    if pol.get("route"):   # EMERG, OOS (A8)
+        return {"ok": False, "error": f"{pol['code']} never creates a ticket; outcome {pol.get('outcome')} (A8)"}
     fields = {k: redact(str(v))[0] for k, v in (fields or {}).items() if v not in (None, "")}  # D2
     missing = [f for f in pol["required_fields"] if not fields.get(f)]
     if missing:

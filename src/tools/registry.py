@@ -10,7 +10,7 @@ from __future__ import annotations
 from src.models.classifier import classify
 from src.tools.handoff import handoff
 from src.tools.knowledge import kb_search
-from src.tools.policy import policy_lookup, valid_codes
+from src.tools.policy import policy_lookup, route_codes, valid_codes
 from src.tools.tickets import create_ticket, get_status, search_tickets
 
 
@@ -26,8 +26,10 @@ def tool_schemas() -> list[dict]:
     return [
         _fn("classifier", "Classify the resident's request into a service code. Returns code, confidence and top2.",
             {"text": {"type": "string", "description": "The resident's description of the issue"}}, ["text"]),
-        _fn("policy_lookup", "Get a service code's unit, required fields and escalation triggers. Call before asking for fields or creating a ticket.",
-            {"code": {"type": "string", "enum": codes}}, ["code"]),
+        _fn("policy_lookup", "Get a service code's unit, required fields, escalation triggers and the cases not to ticket "
+            "(not_handled). Call before asking for fields or creating a ticket. For EMERG or OOS it returns where the "
+            "request goes and the approved reply; those never create a ticket.",
+            {"code": {"type": "string", "enum": codes + route_codes()}}, ["code"]),
         _fn("search_tickets", "Find open tickets near a location (to avoid duplicates).",
             {"location": {"type": "string"}, "code": {"type": "string", "enum": codes},
              "days": {"type": "integer", "description": "Only tickets opened in the last N days"}}, ["location"]),

@@ -56,7 +56,7 @@ def record(state: RuleState, name: str, args: dict, result: dict) -> None:
             state.code, state.confidence = result.get("code"), result.get("confidence")
         if unsure_reason(result):
             state.unsure_count += 1
-    elif name == "policy_lookup" and result.get("ok"):
+    elif name == "policy_lookup" and result.get("ok") and not result.get("route"):   # a route has no unit or fields
         state.looked_up.add(result["code"])
         state.code = result["code"]
     elif name == "search_tickets" and result.get("ok"):

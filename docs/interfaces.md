@@ -39,7 +39,7 @@ Each returns a dict with `ok` (bool) and `error` (str or None).
 
 | Function | Returns when ok | Rule |
 |---|---|---|
-| `policy_lookup(code)` | code, category, unit, required_fields, field_options, escalation_triggers, duplicate_window | A2 |
+| `policy_lookup(code)` | catalogue code: code, category, unit, required_fields, field_options, escalation_triggers, duplicate_window, not_handled (cases not to ticket). Route code (EMERG, OOS): code, route, no_ticket, name, outcome, rules, sent_when, look_alikes, other_services (OOS), wording (the approved reply text); `create_ticket` refuses a route | A2, A8 |
 | `search_tickets(location, code=None, days=None)` | tickets: [{ticket_id, code, status, date_opened}] (nothing else, D3) | A3 |
 | `create_ticket(code, fields)` | ticket_id, code, category, unit, location. On missing fields: ok False, `missing: [...]` | A4 |
 | `get_status(ticket_id, postal_code)` | ticket_id, code, status, unit, date_opened | A5, D5 |
