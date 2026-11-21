@@ -130,7 +130,9 @@ PROMPT_CHANGELOG = [
      "for every trigger, 4 must-escalate and 3 look-alike scenarios x 3 paraphrases (~420 jobs). "
      "Existing rows keep their split. New rows are split per trigger and direction (one scenario "
      "to test, the rest to train) and appended; near-duplicates of existing rows are dropped; "
-     "they carry data_version 5.1 and their own review sheet (review_topup_5.1.csv)."),
+     "they carry data_version 5.1 and their own review sheet (review_topup_5.1.csv). A batch now "
+     "stops after 10 failed live calls in a row (TooManyFailures) instead of rejecting every job "
+     "at $0 (seen on Kaggle with an expired key)."),
 ]
 
 # The FICTIONAL city the 311 service belongs to. Fictional on purpose: we never
@@ -1144,6 +1146,13 @@ def build_messages(job: Dict[str, Any]) -> List[Dict[str, str]]:
 # =============================================================================
 # 5. LLM CLIENT  (OpenRouter chat + on-disk cache + retries + budget guard)
 # =============================================================================
+class TooManyFailures(Exception):
+    """311 data 5.1: raised after MAX_CONSECUTIVE_FAILURES live calls fail in a row."""
+
+
+MAX_CONSECUTIVE_FAILURES = 10
+
+
 class BudgetExceeded(Exception):
     """Raised when a run hits its call-count or dollar ceiling."""
 
@@ -1867,6 +1876,7 @@ def generate_dataset(jobs: List[Dict[str, Any]], client: LLMClient,
     cfg = cfg or Cfg()
     records: List[Dict[str, Any]] = []
     stopped = False
+    fails = 0
     for idx, job in enumerate(jobs, 1):
         try:
             rec = generate_record(job, client)
@@ -1875,6 +1885,17 @@ def generate_dataset(jobs: List[Dict[str, Any]], client: LLMClient,
                 print(f"  ! budget stop after {idx-1} jobs: {e}")
             stopped = True
             break
+        # data 5.1: a run of failed live calls (expired key, no credit, wrong model) stops the
+        # batch instead of turning every remaining job into a rejected row at $0.
+        err = str(rec.get("parse_error") or "")
+        if not client.offline and (err.startswith("HTTP") or err.startswith("request error")
+                                   or err.startswith("unexpected response")):
+            fails += 1
+            if fails >= MAX_CONSECUTIVE_FAILURES:
+                raise TooManyFailures(f"{fails} calls in a row failed; last error: {err[:200]}. "
+                                      "Check the OpenRouter key and credit. Nothing was saved.")
+        else:
+            fails = 0
         ok, reasons = qc(rec, cfg)
         rec["qc_ok"] = ok
         rec["qc_reasons"] = reasons
