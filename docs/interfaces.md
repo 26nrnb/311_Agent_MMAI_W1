@@ -64,7 +64,7 @@ The model sees these as tools named `classifier`, `policy_lookup`,
 
 Supabase table `interaction_events`:
 
-`event_id, interaction_id, step, model, tokens_in, tokens_out, cost_usd, latency_ms, rule_id, outcome, text (masked)` (+ `created_at`)
+`event_id, interaction_id, step, model, tokens_in, tokens_out, cost_usd, latency_ms, rule_id, outcome, text (masked)` (+ `created_at`, and `error_code` from migration 0006: a tool error code, not written by the tools yet)
 
 `step` values written today: `input_screen`, `model`, `tool:<name>`,
 `flow` (one per tree node visited), `reply` (the text the resident was
@@ -162,6 +162,19 @@ node has `title`, optional `description`, `rule`, `enabled`, and either
 `check` + `params` + `yes`/`no`, or `action` + `params` + `next`. Hooks,
 checks and actions are listed by `GET /api/admin/flow` and documented in
 `src/agent/flow.py` and docs/architecture.md.
+
+## Ticket store (D, A)
+
+Supabase `tickets`: `ticket_id, code, unit, status (open|in_progress|closed),
+location, location_norm (generated), street, postal_code, x_m, y_m, lat, lng,
+fields, contact, opened_at, interaction_id, source (seed|fixture|agent)`.
+`street`, `x_m`, `y_m` and `source` come from migration 0006 and match the
+data pipeline's ticket columns (pipeline `address` = `location`,
+`fields_json` = `fields`, `created_at` = `opened_at`). Agent-created tickets
+fill `street` and `source = agent`; `x_m`/`y_m` stay null (the agent doesn't
+place tickets on the grid). Ticket IDs: seeds `311-YYYY-100000` up, fixtures
+`001045` to `001048`, agent-created `500001` up (`ticket_seq`;
+`FIRST_AGENT_TICKET` in `src/tools/store.py`), re-run simulations `900001` up.
 
 ## Ticket and handoff tracking (proposed)
 

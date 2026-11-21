@@ -11,7 +11,7 @@ def test_routine_bin_case_end_to_end(llm, sel, fresh_store):
         [tool_call("policy_lookup", {"code": "SW-BIN"})],
         [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS})],
-        "I've created request 311-2026-000001 for Damaged or missing bin at 12 Oak Street.",
+        "I've created request 311-2026-500001 for Damaged or missing bin at 12 Oak Street.",
     )
     out = handle_turn(None, "My recycling bin lid at 12 Oak Street G1A 1A1 is cracked", sel)
     ticket_id = fresh_store.tickets[0]["ticket_id"]
@@ -122,7 +122,7 @@ def test_outcome_logged_on_each_reply_and_the_last_is_final(llm, sel, fresh_stor
         [tool_call("policy_lookup", {"code": "SW-BIN"})],
         [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS})],
-        f"I've created request 311-{fresh_store_year()}-000001 for Damaged or missing bin at 12 Oak Street.")
+        f"I've created request 311-{fresh_store_year()}-500001 for Damaged or missing bin at 12 Oak Street.")
     iid = handle_turn(None, "My recycling bin lid is cracked", sel)["interaction_id"]
     handle_turn(iid, "12 Oak Street G1A 1A1, recycling, cracked lid", sel)
     assert _outcomes(fresh_store) == ["ask_clarification", "create_ticket"]

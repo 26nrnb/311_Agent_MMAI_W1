@@ -30,7 +30,7 @@ def _bin_script():
         [tool_call("policy_lookup", {"code": "SW-BIN"})],
         [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS})],
-        "I'm an automated assistant. I've created request 311-2026-000001 for Damaged or missing bin at 12 Oak Street.",
+        "I'm an automated assistant. I've created request 311-2026-500001 for Damaged or missing bin at 12 Oak Street.",
     )
 
 

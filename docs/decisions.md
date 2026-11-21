@@ -145,3 +145,9 @@ alternatives, and why. The report draws on this file directly.
 * **Chose:** each `reply` event carries the conversation's outcome so far, one of the ten names in `policy.yaml` `outcomes`; the last one is the final outcome the harness scores. It is decided from what the agent did (rules the tree fired, tickets created, the handoff rule, get_status and kb_search results, approved wording used, a duplicate named), in a fixed order (`src/agent/outcome.py`). Which handoff rules mean `handoff_oos` or `handoff_language` is read from `policy.yaml` `outcomes`. Nothing is logged when none applies, and the harness then uses its own rules.
 * **Why:** policy v1.0 action item for W4. The harness's derivation reads reply text with patterns; the agent knows which rule fired and which wording it used. A genuine request with a hidden instruction now scores `create_ticket` (S5), the known limit of the text-based derivation.
 * **Open:** the A8 check blocks any second ticket in a conversation, so the agent can't reach `handle_each` yet (two issues in one message need two tickets).
+
+## D-024 Migration 0006: ticket grid columns, error_code, agent ticket range (2026-11-20)
+
+* **Chose:** `tickets` gets `street`, `x_m`, `y_m` and `source` (seed, fixture or agent), and `interaction_events` gets `error_code`, as the 311 Interfaces doc (sections 5 and 7) proposed. Agent-created ticket IDs now start at `311-YYYY-500001`, in Supabase (`ticket_seq`) and in the in-memory store the tests and harness use.
+* **Why:** the pipeline's seeded tickets carry these columns, and `radius_m` duplicate windows need grid positions. Starting the agent's IDs at 500001 keeps them clear of the seeds (100000 up), the fixtures (001045 to 001048) and re-run simulations (900001 up), so seeding Supabase can't collide with tickets the agent made.
+* **Not yet:** the tools don't return an `error_code`, so the column stays empty; `search_tickets` still matches on location text, not on the grid.

@@ -39,6 +39,12 @@ def search_tickets(location: str, code: str | None = None, days: int | None = No
     return {"ok": True, "error": None, "tickets": tickets}
 
 
+def _street(location: str | None) -> str | None:
+    """The street without the house number: "12 Oak Street, G1A 1A1" -> "Oak Street"."""
+    first = (location or "").split(",")[0].strip()
+    return re.sub(r"^\d+[A-Za-z]?\s+", "", first) or None
+
+
 def _not_handled(pol: dict, fields: dict) -> dict | None:
     """A8 [hard]: the catalogue case these fields fall under that the City doesn't handle, if any.
     Only cases that list field values can be checked here; the others rely on the model."""
@@ -75,10 +81,12 @@ def create_ticket(code: str, fields: dict, interaction_id: str | None = None) ->
         "code": pol["code"],
         "unit": pol["unit"],
         "location": location,
+        "street": _street(location),
         "postal_code": fields.pop("postal_code", None) or _postal_code(location),
         "fields": fields,
         "contact": contact or None,
         "interaction_id": interaction_id,
+        "source": "agent",   # x_m, y_m stay null: the agent doesn't place tickets on the grid
     }
     try:
         saved = get_store().create_ticket(row)

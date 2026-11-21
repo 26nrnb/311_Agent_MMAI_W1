@@ -133,3 +133,13 @@ def test_create_ticket_refuses_a_case_the_city_does_not_handle(fresh_store):
     assert create_ticket("TR-TREE", {"city_or_private_tree": "private tree"})["not_handled"] == "private_tree"
     # a City tree is still filed
     assert create_ticket("TR-TREE", {**fields, "city_or_private_tree": "park tree"})["ok"]
+
+
+def test_agent_tickets_fill_migration_0006_columns(fresh_store):
+    out = create_ticket("SW-BIN", BIN)
+    t = fresh_store.tickets[0]
+    # above the pipeline's seeds (100000 up) and fixtures (001045 to 001048)
+    assert out["ticket_id"].endswith("-500001")
+    assert (t["street"], t["source"], t.get("x_m")) == ("Oak Street", "agent", None)
+    from src.tools.store import TICKET_COLUMNS
+    assert {"street", "source"} <= set(TICKET_COLUMNS.split(",")) and "contact" not in TICKET_COLUMNS

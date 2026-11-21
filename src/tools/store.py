@@ -34,7 +34,12 @@ def store_failure(e: StoreError) -> dict:
 
 
 # Ticket columns /admin may show. contact (D1) is never returned.
-TICKET_COLUMNS = "ticket_id,code,unit,status,location,postal_code,fields,opened_at,interaction_id"
+TICKET_COLUMNS = "ticket_id,code,unit,status,location,street,postal_code,fields,opened_at,interaction_id,source"
+
+# First number of an agent-created ticket (311-YYYY-500001), above the pipeline's seeds
+# (100000 up), its fixtures (001045 to 001048) and re-run simulations (900001 up).
+# Supabase's ticket_seq starts here too (migration 0006).
+FIRST_AGENT_TICKET = 500001
 
 
 # Event columns the analytics tab reads (never the text).
@@ -291,7 +296,7 @@ class MemoryStore:
                                           for p, c in (config or {}).items()}
         self.revisions: list[dict] = []
         self.updates: list[dict] = []
-        self._ticket_seq = itertools.count(1)
+        self._ticket_seq = itertools.count(FIRST_AGENT_TICKET)
         self._handoff_seq = itertools.count(1)
         self.fail: set[str] = set()   # method names that should raise (failure tests)
 
