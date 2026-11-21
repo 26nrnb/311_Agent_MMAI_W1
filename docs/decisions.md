@@ -150,4 +150,10 @@ alternatives, and why. The report draws on this file directly.
 
 * **Chose:** `tickets` gets `street`, `x_m`, `y_m` and `source` (seed, fixture or agent), and `interaction_events` gets `error_code`, as the 311 Interfaces doc (sections 5 and 7) proposed. Agent-created ticket IDs now start at `311-YYYY-500001`, in Supabase (`ticket_seq`) and in the in-memory store the tests and harness use.
 * **Why:** the pipeline's seeded tickets carry these columns, and `radius_m` duplicate windows need grid positions. Starting the agent's IDs at 500001 keeps them clear of the seeds (100000 up), the fixtures (001045 to 001048) and re-run simulations (900001 up), so seeding Supabase can't collide with tickets the agent made.
-* **Not yet:** the tools don't return an `error_code`, so the column stays empty; `search_tickets` still matches on location text, not on the grid.
+* **Not yet:** `search_tickets` still matches on location text, not on the grid.
+
+## D-025 Tool error codes (2026-11-21)
+
+* **Chose:** every tool result carries `error_code` next to `ok` and `error`, with the rest of the result still at the top level, as section 3 of the 311 Interfaces doc locks (not a `data` wrapper). Codes are the doc's eight plus three the doc's list doesn't cover: `not_handled` (A8), `blocked` (a flow check stopped the call) and `bad_arguments` (A9). The orchestrator logs the code to `interaction_events.error_code`.
+* **Why:** failures can be counted by kind without parsing the error text, and keeping results at the top level means the guardrail tests and the eval harness that read `ticket_id`, `missing` and the rest keep working.
+* **Not yet:** `pii_rejected` is defined but unused, since D2 redacts PII in fields instead of refusing; `invalid_value` isn't raised for closed field values, because `create_ticket` doesn't check `field_options`.

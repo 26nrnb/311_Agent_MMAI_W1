@@ -1,4 +1,4 @@
-"""W4 tool contracts (docs/interfaces.md): every tool returns a dict with ok and error."""
+"""W4 tool contracts (docs/interfaces.md): every tool returns a dict with ok, error and error_code."""
 import time
 
 from src.models.classifier import classify
@@ -156,3 +156,39 @@ def test_agent_tickets_fill_migration_0006_columns(fresh_store):
     assert (t["street"], t["source"], t.get("x_m")) == ("Oak Street", "agent", None)
     from src.tools.store import TICKET_COLUMNS
     assert {"street", "source"} <= set(TICKET_COLUMNS.split(",")) and "contact" not in TICKET_COLUMNS
+
+
+# --- error codes (src/tools/errors.py, Interfaces doc section 3) ---
+
+def test_every_result_carries_error_code():
+    from src.tools.errors import ERROR_CODES
+    good = [policy_lookup("SW-BIN"), policy_lookup("EMERG"), create_ticket("SW-BIN", BIN),
+            search_tickets("12 Oak Street"), kb_search("bins"), handoff("E3", {})]
+    assert all(r["ok"] and r["error_code"] is None for r in good)
+    bad = {
+        "unknown_code": [policy_lookup("XX-NOPE"), create_ticket("EMERG", BIN), create_ticket("XX-NOPE", BIN)],
+        "missing_argument": [search_tickets(""), kb_search(" "), get_status("311-2026-500001", "")],
+        "missing_fields": [create_ticket("SW-BIN", {"location": "12 Oak Street"}),
+                           create_ticket("SW-BIN", {**BIN, "location": "near the park"})],
+        "not_found": [get_status("311-2026-999999", "G1A 1A1")],
+        "invalid_value": [handoff("Z9", {})],
+    }
+    for code, results in bad.items():
+        assert code in ERROR_CODES
+        for r in results:
+            assert not r["ok"] and r["error"] and r["error_code"] == code, (code, r)
+
+
+def test_store_failure_is_unavailable(fresh_store):
+    fresh_store.fail.add("create_ticket")
+    r = create_ticket("SW-BIN", BIN)
+    assert r["error_code"] == "unavailable" and r["_failure"]
+
+
+def test_policy_unavailable(monkeypatch):
+    import src.tools.policy as pmod
+    def broken():
+        raise RuntimeError("no config")
+    monkeypatch.setattr(pmod, "policy", broken)
+    assert policy_lookup("SW-BIN")["error_code"] == "policy_unavailable"
+    assert create_ticket("SW-BIN", BIN)["error_code"] == "policy_unavailable"

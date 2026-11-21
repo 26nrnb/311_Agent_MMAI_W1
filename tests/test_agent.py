@@ -57,7 +57,8 @@ def test_a10_create_blocked_until_tickets_are_searched(llm, sel, fresh_store):
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS}, "c2")],
         "Created.")
     handle_turn(None, "My recycling bin lid at 12 Oak Street is cracked", sel)
-    assert any(e["outcome"] == "blocked" and e["rule_id"] == "A10" for e in fresh_store.events)
+    assert any(e["outcome"] == "blocked" and e["rule_id"] == "A10" and e["error_code"] == "blocked"
+               for e in fresh_store.events)
     assert len(fresh_store.tickets) == 1                                     # created after the search
 
 

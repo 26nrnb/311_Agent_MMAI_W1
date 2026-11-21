@@ -8,6 +8,7 @@ model only supplies the rule ID and a short reason.
 from __future__ import annotations
 
 from src.models.classifier import classify
+from src.tools.errors import ok
 from src.tools.handoff import handoff
 from src.tools.knowledge import kb_search
 from src.tools.policy import policy_lookup, route_codes, valid_codes
@@ -48,7 +49,7 @@ def tool_schemas() -> list[dict]:
 
 
 TOOLS = {
-    "classifier": lambda text: classify(text) | {"ok": True, "error": None},
+    "classifier": lambda text: ok(**classify(text)),
     "policy_lookup": policy_lookup,
     "search_tickets": search_tickets,
     "create_ticket": create_ticket,

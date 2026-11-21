@@ -30,6 +30,7 @@ from src.guardrails import output_check
 from src.guardrails.input_screen import screen
 from src.guardrails.masking import mask, redact
 from src.models.llm import LLMError, LLMSelection, chat
+from src.tools.errors import fail, ok
 from src.tools.handoff import handoff
 from src.tools.registry import TOOLS, tool_schemas
 from src.tools.store import get_store
@@ -81,11 +82,14 @@ def render_system_prompt(pol: dict, template: str) -> str:
 
 def log_event(session: Session, step: str, *, model: str | None = None, tokens_in: int = 0,
               tokens_out: int = 0, cost_usd: float | None = None, latency_ms: int | None = None,
-              rule_id: str | None = None, outcome: str | None = None, text: str | None = None) -> None:
+              rule_id: str | None = None, outcome: str | None = None, text: str | None = None,
+              error_code: str | None = None) -> None:
     """Event log contract (docs/interfaces.md). Text is always masked (D6 [hard])."""
     row = {"event_id": str(uuid.uuid4()), "interaction_id": session.interaction_id, "step": step,
            "model": model, "tokens_in": tokens_in, "tokens_out": tokens_out, "cost_usd": cost_usd,
            "latency_ms": latency_ms, "rule_id": rule_id, "outcome": outcome, "text": mask(text)}
+    if error_code:   # only sent when set, so a store without the 0006 column still logs
+        row["error_code"] = error_code
     try:
         get_store().log_event(row)
     except Exception as e:  # logging must never break the conversation (F5 still prints)
@@ -165,22 +169,23 @@ def _run_tool(session: Session, name: str, args: dict) -> tuple[dict, flow.Outco
     """Returns (result for the model, an outcome that ends the turn or None)."""
     st = session.state
     if name not in TOOLS:
-        return {"ok": False, "error": f"no such tool {name!r} (A9)"}, None
+        return fail("bad_arguments", f"no such tool {name!r} (A9)"), None
     if name == "handoff":   # the model decided a person must review this (A6)
         rule = args.get("rule_id") or "M4"
-        return {"ok": True, "error": None, "note": "handled"}, flow.Outcome(
+        return ok(note="handled"), flow.Outcome(
             "handoff", rule, reason=args.get("reason") or rule, handoff_rule=rule)
 
     ctx = flow.Ctx(state=st, tool=name, args=args)
     before = _run_flow(session, f"before_{name}", ctx)
     if before.kind == "block":
-        log_event(session, f"tool:{name}", rule_id=before.rule, outcome="blocked", text=before.text)
-        return {"ok": False, "error": before.text}, None
+        log_event(session, f"tool:{name}", rule_id=before.rule, outcome="blocked", text=before.text,
+                  error_code="blocked")
+        return fail("blocked", before.text), None
     if before.kind in ("reply", "handoff"):
         if name == "create_ticket":   # E2: staff get the draft ticket with the handoff
             st.fields = {**st.fields, **{k: redact(str(v))[0] for k, v in (args.get("fields") or {}).items()
                                          if v not in (None, "")}}
-        return {"ok": False, "error": "skipped: request handed off"}, before
+        return fail("blocked", "skipped: request handed off"), before
 
     retries = policy()["thresholds"]["tool_retries"]
     for attempt in range(retries + 1):
@@ -189,14 +194,14 @@ def _run_tool(session: Session, name: str, args: dict) -> tuple[dict, flow.Outco
             call_args = {**args, "interaction_id": session.interaction_id} if name == "create_ticket" else args
             result = TOOLS[name](**call_args)
         except TypeError as e:   # model passed wrong arguments
-            result = {"ok": False, "error": f"bad arguments: {e}"}
+            result = fail("bad_arguments", f"bad arguments: {e}")
             break
         except Exception as e:   # F1: unexpected tool failure, retry once
-            result = {"ok": False, "error": f"tool failure: {type(e).__name__}", "_failure": True}
+            result = fail("unavailable", f"tool failure: {type(e).__name__}", _failure=True)
         latency = int((time.perf_counter() - start) * 1000)
         failed = bool(result.get("_failure"))
         log_event(session, f"tool:{name}", latency_ms=latency, outcome="ok" if result["ok"] else "error",
-                  rule_id="F5" if failed else None,
+                  rule_id="F5" if failed else None, error_code=result.get("error_code"),
                   text=json.dumps({"args": args, "error": result.get("_detail") or result.get("error"),
                                    "result": {k: v for k, v in result.items() if not k.startswith("_")}}))
         if not failed:
@@ -254,7 +259,7 @@ def handle_turn(interaction_id: str | None, user_text: str, sel: LLMSelection) -
         for call in calls:
             name = call["function"]["name"]
             if ending:   # the turn already ended; answer remaining calls so the context stays valid
-                result = {"ok": False, "error": "skipped: request handed off"}
+                result = fail("blocked", "skipped: request handed off")
             else:
                 try:
                     raw = call["function"].get("arguments") or "{}"

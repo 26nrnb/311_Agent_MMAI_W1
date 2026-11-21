@@ -35,7 +35,14 @@ margin 0.10, field attempts 2, ...) and approved `wording`.
 
 ## Tool functions (D)
 
-Each returns a dict with `ok` (bool) and `error` (str or None).
+Each returns a dict with `ok` (bool), `error` (text for the model, or None)
+and `error_code` (one of the codes below, or None), with the rest of the
+result at the top level (`src/tools/errors.py`):
+
+```
+{"ok": true,  "error": null, "error_code": null, "ticket_id": "311-2026-500001", "code": "SW-BIN", ...}
+{"ok": false, "error": "missing required fields: damage_type (A4)", "error_code": "missing_fields", "missing": ["damage_type"]}
+```
 
 | Function | Returns when ok | Rule |
 |---|---|---|
@@ -46,9 +53,26 @@ Each returns a dict with `ok` (bool) and `error` (str or None).
 | `handoff(rule_id, package)` | ref_id, rule_id. Package: interaction_id, code, confidence, fields, transcript, possible_duplicates, reason (masked on write) | A6 |
 | `kb_search(query, top_k=None)` **proposed** | passages: [{title, source, text}] | C5 |
 
-Infrastructure failures return `ok: False` plus private `_failure: True` /
-`_detail` keys; the orchestrator strips `_` keys before the model sees the
-result, retries once (F1) and then hands off (E9).
+Infrastructure failures return `ok: False`, `error_code: unavailable`, plus
+private `_failure: True` / `_detail` keys; the orchestrator strips `_` keys
+before the model sees the result, retries once (F1) and then hands off (E9).
+
+| error_code | When |
+|---|---|
+| `unknown_code` | Code not in the catalogue or routes, or EMERG/OOS passed to `create_ticket` |
+| `missing_argument` | No location, query, ticket number or postal code |
+| `missing_fields` | A required policy field is empty, or the location is too vague (A11); `missing` lists them |
+| `invalid_value` | A value that isn't allowed, e.g. an unknown handoff `rule_id` |
+| `pii_rejected` | Defined, not used yet: D2 redacts PII in fields rather than refusing |
+| `not_found` | Ticket number and postal code don't match a ticket (same reply either way, D5) |
+| `policy_unavailable` | policy.yaml couldn't be read (F4) |
+| `unavailable` | Store or service failed, after one retry (F1, E9) |
+| `not_handled` | (added) The catalogue marks the case as not handled by the City (A8) |
+| `blocked` | (added) A flow check stopped the call before it ran, or the request was already handed off |
+| `bad_arguments` | (added) A tool that doesn't exist, or arguments it doesn't take (A9) |
+
+The orchestrator writes the code to `interaction_events.error_code` on the
+`tool:<name>` event (null when the call succeeded).
 
 The model sees these as tools named `classifier`, `policy_lookup`,
 `search_tickets`, `create_ticket`, `get_status`, `handoff`, `kb_search`
@@ -64,7 +88,7 @@ The model sees these as tools named `classifier`, `policy_lookup`,
 
 Supabase table `interaction_events`:
 
-`event_id, interaction_id, step, model, tokens_in, tokens_out, cost_usd, latency_ms, rule_id, outcome, text (masked)` (+ `created_at`, and `error_code` from migration 0006: a tool error code, not written by the tools yet)
+`event_id, interaction_id, step, model, tokens_in, tokens_out, cost_usd, latency_ms, rule_id, outcome, text (masked)` (+ `created_at`, and `error_code` from migration 0006: the tool's error code on `tool:<name>` events, null otherwise)
 
 `step` values written today: `input_screen`, `model`, `tool:<name>`,
 `flow` (one per tree node visited), `reply` (the text the resident was

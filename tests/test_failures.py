@@ -51,3 +51,16 @@ def test_setup_error_is_not_a_handoff(llm, sel, fresh_store):
     except SetupError:
         pass
     assert not fresh_store.handoffs
+
+
+def test_tool_error_code_is_logged_on_the_event(llm, sel, fresh_store):
+    fresh_store.fail.add("create_ticket")
+    llm(
+        [tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
+        [tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS})],
+    )
+    handle_turn(None, "bin broken", sel)
+    tool = {e["step"]: e for e in fresh_store.events if e["step"].startswith("tool:")}
+    assert tool["tool:create_ticket"]["error_code"] == "unavailable"
+    assert "error_code" not in tool["tool:policy_lookup"]          # only set on errors

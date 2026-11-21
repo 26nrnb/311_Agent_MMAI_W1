@@ -167,7 +167,7 @@ def _patched(llm_cache, clf_cache, classify_fn, clf_name):
         base = key_for("classify", clf_name, text)
         seen[base] += 1
         out = clf_cache.get_or_call(f"{base}:{seen[base]}", lambda: classify_fn(text))
-        return dict(out) | {"ok": True, "error": None}
+        return dict(out) | {"ok": True, "error": None, "error_code": None}
 
     old_chat, old_now, old_clf = orchestrator.chat, store_mod._now, registry.TOOLS["classifier"]
     orchestrator.chat, store_mod._now = cached_chat, (lambda: FROZEN_NOW)

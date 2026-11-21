@@ -30,7 +30,8 @@ def store_failure(e: StoreError) -> dict:
     """Tool result for an infrastructure failure. Keys starting with "_" are
     stripped before the model sees the result; the orchestrator retries once
     and then hands off (F1, E9)."""
-    return {"ok": False, "error": "service temporarily unavailable", "_failure": True, "_detail": str(e)}
+    return {"ok": False, "error": "service temporarily unavailable", "error_code": "unavailable",
+            "_failure": True, "_detail": str(e)}
 
 
 # Ticket columns /admin may show. contact (D1) is never returned.
