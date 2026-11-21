@@ -11,7 +11,9 @@ handle_turn() runs one resident message through the interaction tree
   the model's reply                -> "reply" tree (D8, M3, C1)
 
 Every step, including every tree node visited and the branch it took, is
-logged to interaction_events with masked text (D6).
+logged to interaction_events with masked text (D6). Each reply event also
+carries the conversation's outcome so far, one of the ten names in
+policy.yaml (src/agent/outcome.py); the last one is the final outcome.
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from src.agent import flow
+from src.agent.outcome import note_reply, outcome
 from src.agent.rules import RuleState, record
 from src.config import app_config, load_prompt, policy
 from src.guardrails import output_check
@@ -92,6 +95,8 @@ def log_event(session: Session, step: str, *, model: str | None = None, tokens_i
 def _run_flow(session: Session, hook: str, ctx: flow.Ctx) -> flow.Outcome:
     """Run one hook's tree, logging every node visited as a "flow" event."""
     def trace(step: dict):
+        if step["fired"] and step["rule"]:
+            session.state.fired.add(step["rule"])
         log_event(session, "flow", rule_id=step["rule"] if step["fired"] else None,
                   outcome=step["branch"], text=json.dumps(step))
     return flow.run(hook, ctx, trace)
@@ -111,6 +116,7 @@ def _do_handoff(session: Session, rule_id: str, reason: str) -> str:
     log_event(session, "tool:handoff", rule_id=rule_id, outcome="ok" if result["ok"] else "error",
               text=json.dumps({"reason": reason, "result": result}))
     st.handed_off = True
+    st.handoff_rule = rule_id
     if not result["ok"]:
         # F4/E9: even the handoff failed; never claim anything was recorded.
         return "Something went wrong on our side and I couldn't record this. Please call 311 directly."
@@ -121,7 +127,9 @@ def _do_handoff(session: Session, rule_id: str, reason: str) -> str:
 def _finish(session: Session, reply: str, rule_id: str | None = None) -> dict:
     session.transcript.append({"role": "assistant", "text": reply})
     session.messages.append({"role": "assistant", "content": reply})
-    log_event(session, "reply", rule_id=rule_id, text=reply)   # what the resident saw
+    note_reply(session.state, reply)
+    log_event(session, "reply", rule_id=rule_id, text=reply,   # what the resident saw
+              outcome=outcome(session.state, reply))
     return {"interaction_id": session.interaction_id, "reply": reply, "rule_id": rule_id}
 
 

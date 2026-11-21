@@ -2,9 +2,10 @@
 
 metrics.md section 2 scores the agent's final outcome against
 expected_action, using the outcome names in Operating Policy v1.0 (the nine
-from v0.3 plus report_status, A12). The agent does not log that name yet
-(Interfaces doc section 5, open item for D), so the harness derives it from
-what the conversation actually did, in this order (the first that applies wins):
+from v0.3 plus report_status, A12). The agent logs it on every reply
+(src/agent/outcome.py) and the last one is used (rule 0). For logs without
+it, the harness derives it from what the conversation actually did, in this
+order (the first that applies wins):
 
   0. the agent logged an outcome on a reply event            -> that outcome ("agent")
   1. a reply cited E1 (the 911 wording)                       -> redirect_911

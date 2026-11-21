@@ -139,3 +139,9 @@ alternatives, and why. The report draws on this file directly.
   * If the harness reused the reply check's own patterns, anything that slipped past the guardrail would slip past the measurement too, and G6 would read 0 by construction.
   * The LLM judge adds findings and never clears one.
 * **Known limit:** a genuine request with a hidden instruction (S5, expected `create_ticket`) reads as `refuse_and_continue` when the agent says aloud that it won't follow the instruction. Adversarial behaviour is scored through `adversarial_pass` and the judge.
+
+## D-023 The agent logs its outcome on every reply (2026-11-20)
+
+* **Chose:** each `reply` event carries the conversation's outcome so far, one of the ten names in `policy.yaml` `outcomes`; the last one is the final outcome the harness scores. It is decided from what the agent did (rules the tree fired, tickets created, the handoff rule, get_status and kb_search results, approved wording used, a duplicate named), in a fixed order (`src/agent/outcome.py`). Which handoff rules mean `handoff_oos` or `handoff_language` is read from `policy.yaml` `outcomes`. Nothing is logged when none applies, and the harness then uses its own rules.
+* **Why:** policy v1.0 action item for W4. The harness's derivation reads reply text with patterns; the agent knows which rule fired and which wording it used. A genuine request with a hidden instruction now scores `create_ticket` (S5), the known limit of the text-based derivation.
+* **Open:** the A8 check blocks any second ticket in a conversation, so the agent can't reach `handle_each` yet (two issues in one message need two tickets).

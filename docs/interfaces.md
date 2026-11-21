@@ -71,6 +71,9 @@ Supabase table `interaction_events`:
 shown). For `flow` the text is JSON `{hook, node, title, rule, check |
 action, observed, branch, next, fired, says?}`; `rule_id` is set only when
 the node fired (a decision's yes branch, or an action).
+For `reply`, `outcome` is the conversation's outcome so far, one of the
+ten names in `policy.yaml` `outcomes` (blank when none applies yet); the
+last reply's value is the final outcome (`src/agent/outcome.py`).
 For `tool:<name>` the text is JSON `{args, error, result}`; for
 `tool:handoff` it is `{reason, result}`. `model` is `provider:model_id`. `cost_usd` is
 OpenRouter's reported cost, 0 for Ollama.

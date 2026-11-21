@@ -46,7 +46,7 @@ Re-running the same command resumes from the cache, so no answer is paid for twi
 
 ## How a case is scored
 
-**Outcome.** The agent does not log which of the ten outcomes (policy v1.0) it reached yet (Interfaces doc section 5, open item for D). The harness derives the outcome from what the conversation did, using fixed rules that never look at the expected label (`src/eval/outcome.py`):
+**Outcome.** The agent logs which of the ten outcomes (policy v1.0) it reached on every reply (`src/agent/outcome.py`), and the harness uses the last one. For conversations logged without it, the harness derives the outcome from what the conversation did, using fixed rules that never look at the expected label (`src/eval/outcome.py`):
 
 1. A 911 reply means `redirect_911`.
 2. A handoff means `handoff_oos` (rule E10), `handoff_language` (English-only reply) or `escalate_human` (any other rule).

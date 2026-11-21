@@ -3,7 +3,8 @@
 record() runs after every tool call and keeps the facts the tree's checks
 read: which codes were looked up (A2), tickets and IDs returned (A8, M3),
 attempts per missing field (E6), how often the classifier was unsure (E3).
-The decisions themselves are nodes in flow.yaml (src/agent/flow.py).
+The decisions themselves are nodes in flow.yaml (src/agent/flow.py). The
+last group of fields feeds the outcome logged on each reply (src/agent/outcome.py).
 """
 from __future__ import annotations
 
@@ -25,6 +26,13 @@ class RuleState:
     confidence: float | None = None
     fields: dict = field(default_factory=dict)
     possible_duplicates: list[dict] = field(default_factory=list)
+    # for the outcome (src/agent/outcome.py)
+    handoff_rule: str | None = None
+    status_found: bool = False                              # get_status found the ticket (A12)
+    kb_answered: bool = False                               # kb_search returned an article (A13)
+    linked_id: str | None = None                            # open ticket a reply named (C6)
+    fired: set[str] = field(default_factory=set)            # rules the tree fired
+    wordings: set[str] = field(default_factory=set)         # approved wordings the replies used
 
 
 def unsure_reason(result: dict) -> str | None:
@@ -63,6 +71,9 @@ def record(state: RuleState, name: str, args: dict, result: dict) -> None:
             state.field_attempts[f] = state.field_attempts.get(f, 0) + 1
     elif name == "get_status" and result.get("ok"):
         state.known_ids.add(result["ticket_id"])
+        state.status_found = True
+    elif name == "kb_search" and result.get("ok") and result.get("passages"):
+        state.kb_answered = True
     elif name == "handoff" and result.get("ok"):
         state.handed_off = True
         state.known_ids.add(result["ref_id"])
