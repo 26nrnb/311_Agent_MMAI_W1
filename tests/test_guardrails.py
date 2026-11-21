@@ -150,3 +150,23 @@ def test_d6_phone_mask_skips_ids():
     uid = "4f9e78ff-f586-4abc-b6dd-573367952761"
     assert mask(uid) == uid
     assert "[PHONE]" in mask("call (416) 555-0199") and "[PHONE]" in mask("+1 416 555 0199")
+
+
+@pytest.mark.parametrize("text", [   # reported by Abi: status checks lost their ticket number
+    "Any update on 311-2026-100308 in my area?",
+    "Ticket 311-2026-100308 is still open",
+    "311-2026-100308 at K7L 3N6",
+])
+def test_d2_ticket_numbers_are_not_redacted(text):
+    out, found = redact(text)
+    assert out == text and found == []
+
+
+@pytest.mark.parametrize("text", [
+    "my health card is 1234-567-890-AB",
+    "my health card is 1234-567-890-ab",
+    "My OHIP number 1234567890",
+])
+def test_d2_health_card_still_redacted(text):
+    out, found = redact(text)
+    assert "567" not in out and any(f.startswith("health_card") for f in found)
