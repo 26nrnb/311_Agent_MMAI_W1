@@ -241,9 +241,9 @@ def test_status_check_end_to_end(tmp_path, monkeypatch):
     row = score.read(harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", results_dir=tmp_path / "r",
                                  tickets_path=str(tickets), quiet=True))[0]
     assert (row["actual_action"], row["predicted_code"], row["tickets_created"]) == ("report_status", "RD-POT", "0")
-    # Policy v1.0 D6 masks postal codes in logs after the first three characters. The masking in
-    # guardrails.yaml doesn't do that yet, so the harness reports it as a leak (G8) rather than a pass.
-    assert "log:input_screen:postal_code" in row["pii_findings"] and row["pii_leak"] == "true"
+    # Policy v1.0 D6 masks postal codes in logs after the first three characters (guardrails.yaml
+    # v1.0 masking.postal_code), so the logged "G1L [POSTAL_CODE]" is not a leak (G8).
+    assert row["pii_findings"] == "" and row["pii_leak"] == "false"
 
 
 def test_postal_code_checks():
