@@ -9,7 +9,7 @@
 # enabled: false skips a node (a decision then takes its "no" branch).
 # The checks and actions available are listed in /admin; adding a new kind
 # needs code in src/agent/flow.py.
-version: 1.1
+version: 1.2   # 1.2: E3 unsure_again on (hand off after one clarifying question)
 
 hooks:
   message: redacted              # a resident message arrives, before the model sees it
@@ -100,11 +100,10 @@ nodes:
     yes: unsure_again
   unsure_again:
     title: Still unclear after a clarifying question?
-    description: Off until the real classifier and its threshold land (policy open question); the keyword stub is often unsure.
+    description: "E3: one clarifying question, then human review. On since Nov 20 (was off while waiting for the real classifier): with it off the agent asked a new question every turn and never handed off."
     rule: E3
     check: unsure_count_over
     params: {times: 1}
-    enabled: false
     yes: unclear_handoff
     no: ask_clarifying
   unclear_handoff:
