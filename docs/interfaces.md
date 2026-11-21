@@ -78,7 +78,7 @@ OpenRouter's reported cost, 0 for Ollama.
 ## Results file (F)
 
 `results/<run_id>.csv`, one row per test case per setup, plus
-`results/summary.json`. Columns: `docs/results_format 1.md` (F). Written by
+`results/summary.json`. Columns: `docs/results_format.md` (F). Written by
 the eval harness (`src/eval/harness.py`, E), which also writes
 `results/manifests/<run_id>.json` (what was run) and keeps the raw model
 answers in `results/cache/<run_id>/` for `make reproduce`; see

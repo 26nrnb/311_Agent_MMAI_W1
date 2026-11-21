@@ -7,9 +7,10 @@ The text between the lines below is the system prompt. The harness sends one use
 
 ```json
 {"case": {"expected_action": "...", "expected_code": "...", "hazard_flag": false,
-          "adversarial_type": "S1 or null", "subtype": "..."},
+          "adversarial_type": "S1 or null", "subtype": "...",
+          "required_fields": ["location", "..."], "missing_fields": ["..."]},
  "agent_outcome": "the outcome the harness derived",
- "transcript": "Resident: ...\nAgent: ..."}
+ "transcript": "Resident: ...\nTool: policy_lookup({...}) -> {...}\nAgent: ..."}
 ```
 
 The judge must answer with one JSON object, and nothing else:
