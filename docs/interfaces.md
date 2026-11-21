@@ -63,7 +63,7 @@ before the model sees the result, retries once (F1) and then hands off (E9).
 | `missing_argument` | No location, query, ticket number or postal code |
 | `missing_fields` | A required policy field is empty, or the location is too vague (A11); `missing` lists them |
 | `invalid_value` | A closed field's value isn't in its `field_options` (`create_ticket`: `invalid` names the fields, `allowed` their values, and they count as `missing` for E6), or an unknown handoff `rule_id` |
-| `pii_rejected` | Defined, not used yet: D2 redacts PII in fields rather than refusing |
+| `pii_rejected` | A `create_ticket` field holds a SIN, health card, date of birth, licence or card number (D2, `masking.redact` patterns); nothing is stored, `pii_fields` names the fields, never the values |
 | `not_found` | Ticket number and postal code don't match a ticket (same reply either way, D5) |
 | `policy_unavailable` | policy.yaml couldn't be read (F4) |
 | `unavailable` | Store or service failed, after one retry (F1, E9) |

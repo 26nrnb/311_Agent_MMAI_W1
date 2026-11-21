@@ -88,6 +88,9 @@ def _check_values(pol: dict, fields: dict) -> dict[str, list[str]]:
 def create_ticket(code: str, fields: dict, interaction_id: str | None = None) -> dict:
     """A4 [hard]: refuses unless the code exists and every required field is present.
     A8 [hard]: refuses route codes (EMERG, OOS) and cases the catalogue marks not_handled.
+    D2 [hard]: refuses fields holding a SIN, health card, date of birth, licence or payment
+    card number (masking.redact patterns); nothing is stored. The error names the fields and
+    the kinds found, never the values.
     A4 [hard]: refuses a closed field (field_options) whose value isn't one of its values;
     the field counts as missing, so E6 hands off after two tries.
     A11 [hard]: refuses a location that is no street address, intersection or landmark on a
@@ -99,7 +102,13 @@ def create_ticket(code: str, fields: dict, interaction_id: str | None = None) ->
         return pol
     if pol.get("route"):   # EMERG, OOS (A8)
         return fail("unknown_code", f"{pol['code']} never creates a ticket; outcome {pol.get('outcome')} (A8)")
-    fields = {k: redact(str(v))[0] for k, v in (fields or {}).items() if v not in (None, "")}  # D2
+    fields = {k: v for k, v in (fields or {}).items() if v not in (None, "")}
+    pii = {k: found for k, v in fields.items() if (found := redact(str(v))[1])}   # D2 [hard]
+    if pii:
+        detail = "; ".join(f"{k} holds {', '.join(kinds).replace('_', ' ')}" for k, kinds in pii.items())
+        return fail("pii_rejected", f"{detail}. The City never takes or stores this; leave it out and don't "
+                                    "ask for it (D2)", pii_fields=list(pii))
+    fields = {k: str(v) for k, v in fields.items()}
     case = _not_handled(pol, fields)
     if case:
         danger = f", or {case['danger_now']} if it is a danger now" if case.get("danger_now") else ""

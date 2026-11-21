@@ -37,9 +37,21 @@ def test_d3_search_returns_no_personal_data():
     assert set(r["tickets"][0]) == {"ticket_id", "code", "status", "date_opened"}
 
 
-def test_d2_redacted_before_storage(fresh_store):
-    create_ticket("SW-BIN", {**BIN, "damage_type": "cracked, my SIN is 123 456 789"})
-    assert "123 456 789" not in str(fresh_store.tickets)
+def test_d2_pii_in_a_field_is_rejected_and_nothing_stored(fresh_store):
+    r = create_ticket("SW-BIN", {**BIN, "damage_type": "cracked, my SIN is 123 456 789"})
+    assert not r["ok"] and r["error_code"] == "pii_rejected" and r["pii_fields"] == ["damage_type"]
+    assert "123 456 789" not in r["error"] and "sin" in r["error"]
+    assert not fresh_store.tickets
+
+
+def test_d2_each_kind_is_rejected():
+    for value in ["card 4111 1111 1111 1111", "licence A1234-56789-01234", "SIN 123 456 789"]:
+        assert create_ticket("SW-BIN", {**BIN, "name": value})["error_code"] == "pii_rejected", value
+
+
+def test_d2_ticket_numbers_and_redaction_tags_are_not_pii():
+    r = create_ticket("SW-BIN", {**BIN, "damage_type": "cracked lid", "note": "same as 311-2026-000123 [REDACTED]"})
+    assert r["ok"]
 
 
 def test_handoff_masks_transcript(fresh_store):

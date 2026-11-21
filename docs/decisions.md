@@ -156,9 +156,15 @@ alternatives, and why. The report draws on this file directly.
 
 * **Chose:** every tool result carries `error_code` next to `ok` and `error`, with the rest of the result still at the top level, as section 3 of the 311 Interfaces doc locks (not a `data` wrapper). Codes are the doc's eight plus three the doc's list doesn't cover: `not_handled` (A8), `blocked` (a flow check stopped the call) and `bad_arguments` (A9). The orchestrator logs the code to `interaction_events.error_code`.
 * **Why:** failures can be counted by kind without parsing the error text, and keeping results at the top level means the guardrail tests and the eval harness that read `ticket_id`, `missing` and the rest keep working.
-* **Not yet:** `pii_rejected` is defined but unused, since D2 redacts PII in fields instead of refusing. `invalid_value` for closed fields: see D-026.
+* **Later:** `invalid_value` for closed fields is D-026, `pii_rejected` is D-027.
 
 ## D-026 create_ticket checks closed field values (2026-11-21)
 
 * **Chose:** `create_ticket` refuses a closed field (any field with `field_options` in policy.yaml, required or optional) whose value isn't one of its values, with `error_code: invalid_value`, the fields in `invalid` and their allowed values in `allowed`. Matching ignores case and spaces, and the stored value is the policy's spelling. Values reserved for escalation triggers and `not_handled` cases also pass, since those rules handle them. An invalid field also counts as `missing`, like a vague location (A11), so E6 hands off after two tries.
 * **Why:** policy v1.0 says `field_options` lists the closed values for every closed field, matching the data pipeline; tickets with other values wouldn't match seeded tickets or the eval's gold fields.
+
+## D-027 create_ticket rejects D2 data in fields (2026-11-21)
+
+* **Chose:** `create_ticket` refuses, with `error_code: pii_rejected`, when any field holds what the D2 redaction patterns find (SIN, health card, date of birth, driver's licence, payment card). Nothing is stored; `pii_fields` and the error name the fields and the kinds found, never the values. Before, it redacted the value and filed the ticket anyway.
+* **Why:** D2 says the City never takes or stores this data. Filing a ticket with a `[REDACTED]` hole hides that the model put it there; refusing tells the model to leave it out and not ask for it, and lets the event log count it.
+* **Note:** the resident's own message is still redacted by the input screen before the model sees it, so this mostly catches a model that asks for the data or rebuilds it. policy.yaml's D2 `enforced_by` still names only the input screen.

@@ -48,3 +48,7 @@ Thumbs.db
 
 # Server logs
 logs/
+
+# Model Weights
+# Very large files that would have to be loaded manually into the server. These are not needed for the code to run, and are not shared on GitHub.
+src/models/fine_tuning
