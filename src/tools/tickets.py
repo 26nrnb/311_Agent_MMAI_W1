@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 
 from src.guardrails.masking import redact
+from src.guardrails.location import location_usable
 from src.tools.policy import policy_lookup
 from src.tools.store import StoreError, get_store, store_failure
 
@@ -58,6 +59,8 @@ def _not_handled(pol: dict, fields: dict) -> dict | None:
 def create_ticket(code: str, fields: dict, interaction_id: str | None = None) -> dict:
     """A4 [hard]: refuses unless the code exists and every required field is present.
     A8 [hard]: refuses route codes (EMERG, OOS) and cases the catalogue marks not_handled.
+    A11 [hard]: refuses a location that is no street address, intersection or landmark on a
+    street; it counts as a missing field, so E6 hands off after two tries.
     interaction_id is filled in by the orchestrator (not the model) so /admin can
     link the ticket to its conversation."""
     pol = policy_lookup(code)
@@ -73,6 +76,10 @@ def create_ticket(code: str, fields: dict, interaction_id: str | None = None) ->
                                       f"No ticket; outcome {case.get('outcome', 'handoff_oos')}{danger} (A8)",
                 "not_handled": case["id"], "outcome": case.get("outcome", "handoff_oos")}
     missing = [f for f in pol["required_fields"] if not fields.get(f)]
+    if fields.get("location") and not location_usable(fields["location"]):   # A11 [hard]
+        return {"ok": False, "missing": ["location"] + [f for f in missing if f != "location"],
+                "error": f"location too vague to route: {fields['location']!r}. Ask for a street address, an "
+                         "intersection, or a named landmark on a street (A11)"}
     if missing:
         return {"ok": False, "error": f"missing required fields: {', '.join(missing)} (A4)", "missing": missing}
     location = _location(fields)

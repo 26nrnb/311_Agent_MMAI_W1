@@ -28,7 +28,7 @@ from src.agent.rules import RuleState, record
 from src.config import app_config, load_prompt, policy
 from src.guardrails import output_check
 from src.guardrails.input_screen import screen
-from src.guardrails.masking import mask
+from src.guardrails.masking import mask, redact
 from src.models.llm import LLMError, LLMSelection, chat
 from src.tools.handoff import handoff
 from src.tools.registry import TOOLS, tool_schemas
@@ -177,6 +177,9 @@ def _run_tool(session: Session, name: str, args: dict) -> tuple[dict, flow.Outco
         log_event(session, f"tool:{name}", rule_id=before.rule, outcome="blocked", text=before.text)
         return {"ok": False, "error": before.text}, None
     if before.kind in ("reply", "handoff"):
+        if name == "create_ticket":   # E2: staff get the draft ticket with the handoff
+            st.fields = {**st.fields, **{k: redact(str(v))[0] for k, v in (args.get("fields") or {}).items()
+                                         if v not in (None, "")}}
         return {"ok": False, "error": "skipped: request handed off"}, before
 
     retries = policy()["thresholds"]["tool_retries"]
@@ -216,6 +219,11 @@ def handle_turn(interaction_id: str | None, user_text: str, sel: LLMSelection) -
     session = get_session(interaction_id)
     scr = screen(user_text)
     session.state.mentioned_ids |= output_check.ids_in(scr.text)   # M3: may be quoted back
+    st = session.state                                         # A12: status check or new report?
+    if scr.has("status_request") or output_check.ids_in(scr.text):
+        st.status_signal, st.new_report = True, False          # ask once, even if it also says "new"
+    elif st.status_signal and scr.has("new_report"):
+        st.new_report = True                                   # the resident's answer, in a later message
     session.transcript.append({"role": "resident", "text": scr.text})
     log_event(session, "input_screen", outcome=",".join(scr.flags + scr.redacted) or "clean", text=scr.text)
 

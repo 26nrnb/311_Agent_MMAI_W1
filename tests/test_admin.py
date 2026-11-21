@@ -27,6 +27,7 @@ def chat(message, iid=None):
 
 def test_walkthrough_traces_every_decision(llm, fresh_store):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
             "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.")
@@ -208,6 +209,7 @@ def test_kb_document_created_in_admin_is_searchable_at_once(fresh_store):
 
 def _ticket_conversation(llm):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
             "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.")
@@ -262,6 +264,7 @@ def test_pages_point_at_versioned_static_files():
 
 def test_analytics_counts_requests_outcomes_and_cost(llm, fresh_store):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
             "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.",
@@ -274,14 +277,14 @@ def test_analytics_counts_requests_outcomes_and_cost(llm, fresh_store):
     t = d["totals"]
     assert len(d["rows"]) == 24 and d["tz"] == "America/Toronto"
     assert (t["requests"], t["ticket"], t["handoff"], t["answered"], t["emergencies"]) == (3, 1, 1, 1, 1)
-    assert (t["tickets"], t["handoffs"], t["turns"], t["model_calls"]) == (1, 1, 3, 4)
+    assert (t["tickets"], t["handoffs"], t["turns"], t["model_calls"]) == (1, 1, 3, 5)   # 5: + search_tickets (A10)
     assert d["rows"][-1]["requests"] == 3   # all in the current hour
     assert d["latency"]["turns"] == 3 and d["latency"]["p95_ms"] is not None
     assert d["codes"][0]["code"] == "SW-BIN" and d["handoff_rules"][0]["rule_id"] == "E3"
     # model speed: two replies came from the model, the 911 one from the tree alone
     speed = {r["model"]: r for r in d["speed"]}
     model = next(k for k in speed if k != "tree")
-    assert speed[model]["replies"] == 2 and speed[model]["calls"] == 4 and speed[model]["calls_per_reply"] == 2
+    assert speed[model]["replies"] == 2 and speed[model]["calls"] == 5 and speed[model]["calls_per_reply"] == 2.5
     assert speed[model]["call_p50_ms"] == 1 and speed[model]["tokens_per_s"] == 5000   # 5 tokens in 1 ms
     assert speed["tree"]["replies"] == 1 and speed["tree"]["calls"] == 0 and d["speed"][-1]["model"] == "tree"
     assert isinstance(d["handoff_rules"][0]["text"], str)
@@ -350,6 +353,7 @@ def _rerun(iid, model="other", provider="ollama", **headers):
 
 def test_rerun_replays_a_conversation_on_another_model_without_touching_records(llm, fresh_store):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
             "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.")
@@ -382,13 +386,14 @@ def test_rerun_replays_a_conversation_on_another_model_without_touching_records(
     orig, run = g["runs"]
     assert not orig["rerun"] and run["rerun"] and run["outcome"] == orig["outcome"] == "ticket"
     assert [t["name"] for t in run["turns"][0]["tools"]] == ["policy_lookup", "search_tickets", "create_ticket"]
-    assert run["turns"][0]["same_tools"] is False and run["same_turns"] == 0 and run["same_outcome"]
+    # both runs call the same tools now that A10 makes the original search first too
+    assert run["turns"][0]["same_tools"] is True and run["same_outcome"]
     assert run["calls"] == 4 and run["tokens_in"] == 40 and run["turns"][0]["reply"] == "Filed."
     assert {m["model"] for m in d["by_model"]} == {"ollama:m", "ollama:other"}
 
     # test traffic stays out of usage and cost
     t = client.get("/api/admin/analytics", params={"bucket": "hour", "periods": 2}).json()["totals"]
-    assert t["requests"] == 1 and t["model_calls"] == 3
+    assert t["requests"] == 1 and t["model_calls"] == 4   # the original only (+ search_tickets, A10)
 
     # re-running the re-run replays the original
     llm("Hello again.")
