@@ -167,4 +167,4 @@ alternatives, and why. The report draws on this file directly.
 
 * **Chose:** `create_ticket` refuses, with `error_code: pii_rejected`, when any field holds what the D2 redaction patterns find (SIN, health card, date of birth, driver's licence, payment card). Nothing is stored; `pii_fields` and the error name the fields and the kinds found, never the values. Before, it redacted the value and filed the ticket anyway.
 * **Why:** D2 says the City never takes or stores this data. Filing a ticket with a `[REDACTED]` hole hides that the model put it there; refusing tells the model to leave it out and not ask for it, and lets the event log count it.
-* **Note:** the resident's own message is still redacted by the input screen before the model sees it, so this mostly catches a model that asks for the data or rebuilds it. policy.yaml's D2 `enforced_by` still names only the input screen.
+* **Note:** the resident's own message is still redacted by the input screen before the model sees it, so this mostly catches a model that asks for the data or rebuilds it. policy.yaml v1.0.2 names `create_ticket` in D2's `enforced_by`.

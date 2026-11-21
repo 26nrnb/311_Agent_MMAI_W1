@@ -45,9 +45,10 @@
 # value "fallen limb", as the data does.
 # v1.0.1 (Nov 20): IL-DUMP dumping on private property is now marked by a field value
 # (public_or_private_land: private property), so create_ticket can refuse it in code (A8).
+# v1.0.2 (Nov 21): D2 enforced_by also names create_ticket, which now refuses D2 data in a field.
 # ---------------------------------------------------------------------------------------
 
-version: v1.0.1   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0 | (v1.0.1): IL-DUMP private-property value
+version: v1.0.2   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0 | (v1.0.1): IL-DUMP private-property value | (v1.0.2): D2 enforced_by
 city: Gilead
 
 thresholds:
@@ -317,7 +318,7 @@ rules:
   C7: {text: "Never say someone will visit, inspect or investigate; the unit decides the next steps", hard: true, enforced_by: "output_check commitment (replace the reply)"}   # NEW (v0.3)
   # CHANGED (v0.3): + never a licence plate or the name of a person the resident blames
   D1: {text: "Collect only the location and the category's required fields; contact details only if the resident wants updates; never a licence plate or the name of a person the resident blames", hard: false, enforced_by: "prompt + flow ask_one_field"}
-  D2: {text: "Never ask for or store government ID, health card, SIN, date of birth or payment details; redact before storage", hard: true, enforced_by: "input_screen redaction (masking.redact)"}
+  D2: {text: "Never ask for or store government ID, health card, SIN, date of birth or payment details; redact before storage", hard: true, enforced_by: "input_screen redaction (masking.redact) + tool create_ticket (pii_rejected)"}   # CHANGED (v1.0.2): + create_ticket
   D3: {text: "search_tickets returns no names, contact details or free-text descriptions", hard: true, enforced_by: "tool search_tickets output"}
   D4: {text: "Tell a resident only whether an open ticket exists, its code and status, never who reported it", hard: false, enforced_by: "prompt (D3 limits the data)"}
   # CHANGED (v0.5): + a mismatch gives no details; one retry, then escalate (no guessing postal codes)
@@ -386,6 +387,7 @@ change_log:
   - {version: v0.5, date: 2026-11-18, change: "enforced_by per rule; outcome rule lists rebuilt from the edge cases; routes EMERG and OOS defined; not_handled cases; location triggers defined; A13 kb_search; S8; A8, A12, C1, D5, D6, E2 tightened", reason: "Fixes to the v0.4 shortfalls (Uday's review)"}
   - {version: v1.0, date: 2026-11-18, change: "Frozen for build and evaluation. A11 accepts a named landmark on a street; AN-DEAD private property is escalated; handoff_oos + A13 (general question answered from kb_search); TR-TREE hospital_route reserves 'fallen limb' as the data does", reason: "Final fixes in Operating Policy v1.0"}
   - {version: v1.0.1, date: 2026-11-20, change: "IL-DUMP: optional field public_or_private_land; the private_property not_handled case lists the value 'private property', so create_ticket refuses it in code (A8). No change to what the policy says: dumping on private property was already handoff_oos", reason: "Gap found checking W4's not_handled code: the case had no field value, so only the model could catch it"}
+  - {version: v1.0.2, date: 2026-11-21, change: "D2 enforced_by: + tool create_ticket (pii_rejected). No change to what the policy says", reason: "create_ticket now refuses a field holding D2 data instead of redacting it and filing the ticket (D-027)"}
 
 # KEY MAPPING (for W4 and the Interfaces doc). Interface 2 names -> keys in this file:
 #   codes                -> service_catalogue      (read by policy_lookup, admin, orchestrator)
