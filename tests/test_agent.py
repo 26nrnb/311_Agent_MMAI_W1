@@ -29,6 +29,17 @@ def test_e1_emergency_skips_model(llm, sel, fresh_store):
     assert fake.calls == [] and fresh_store.tickets == []
 
 
+def test_e3_hands_off_after_one_clarifying_question(llm, sel, fresh_store):
+    # E3: one clarifying question, then human review (was a question every turn, never a handoff)
+    llm([tool_call("classifier", {"text": "the fire hydrant is leaking"})], "Is it a fire hydrant or a water main?",
+        [tool_call("classifier", {"text": "fire hydrant"})], "Could you tell me more?")
+    first = handle_turn(None, "the fire hydrant on Rainbow Street is leaking", sel)
+    assert first["rule_id"] is None and fresh_store.handoffs == []
+    second = handle_turn(first["interaction_id"], "fire hydrant", sel)
+    assert second["rule_id"] == "E3" and len(fresh_store.handoffs) == 1
+    assert "311 staff member" in second["reply"] and fresh_store.tickets == []
+
+
 def test_a2_create_blocked_before_policy_lookup(llm, sel, fresh_store):
     llm([tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS})], "ok")
     handle_turn(None, "bin broken", sel)

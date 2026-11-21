@@ -135,6 +135,19 @@ def test_create_ticket_refuses_a_case_the_city_does_not_handle(fresh_store):
     assert create_ticket("TR-TREE", {**fields, "city_or_private_tree": "park tree"})["ok"]
 
 
+
+def test_create_ticket_refuses_dumping_on_private_property(fresh_store):
+    # policy v1.0.1: the IL-DUMP private_property case is marked by a field value, so code refuses it (A8)
+    assert [c["id"] for c in policy_lookup("IL-DUMP")["not_handled"]] == ["private_property"]
+    fields = {"location": "45 Elm Street", "material_type": "old mattress", "public_or_private_land": "Private property"}
+    out = create_ticket("IL-DUMP", fields)
+    assert not out["ok"] and out["not_handled"] == "private_property" and out["outcome"] == "handoff_oos"
+    assert "redirect_911 if it is a danger now" in out["error"] and fresh_store.tickets == []
+    # public land is still filed, and the field stays optional: never required, never asked for (D1)
+    assert create_ticket("IL-DUMP", {**fields, "public_or_private_land": "public land"})["ok"]
+    assert create_ticket("IL-DUMP", {"location": "Elm Park, Elm Street", "material_type": "tires"})["ok"]
+    assert "public_or_private_land" not in policy_lookup("IL-DUMP")["required_fields"]
+
 def test_agent_tickets_fill_migration_0006_columns(fresh_store):
     out = create_ticket("SW-BIN", BIN)
     t = fresh_store.tickets[0]

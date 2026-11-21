@@ -43,9 +43,11 @@
 # removal); handoff_oos answers a general question from kb_search when an article covers it
 # (+ A13). Also aligned with the data pipeline (311-v5): TR-TREE hospital_route reserves the
 # value "fallen limb", as the data does.
+# v1.0.1 (Nov 20): IL-DUMP dumping on private property is now marked by a field value
+# (public_or_private_land: private property), so create_ticket can refuse it in code (A8).
 # ---------------------------------------------------------------------------------------
 
-version: v1.0   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0
+version: v1.0.1   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0 | (v1.0.1): IL-DUMP private-property value
 city: Gilead
 
 thresholds:
@@ -272,11 +274,16 @@ service_catalogue:
     required_fields: [location, material_type]
     field_options:                                        # NEW
       material_type: [old mattress, sofa, tires, renovation drywall, bags of household garbage, broken TV, hazardous material]
+      # NEW (v1.0.1): OPTIONAL, not in required_fields: never asked for (D1). Filled only when the
+      # resident says where the dumping is. "private property" marks the not_handled case below,
+      # so create_ticket refuses it in code (A8), as "private tree" does for TR-TREE.
+      public_or_private_land: [public land, private property]
     escalation_triggers:
       - {id: hazardous, description: "hazardous material (needles, chemicals, asbestos, propane)", values: {material_type: [hazardous material]}}   # CHANGED (v0.4): id and reserved value added
       - {id: near_school, description: "at, beside or in front of a school or playground"}   # NEW (v0.3) | CHANGED (v0.5): defined by what the resident says
     not_handled:   # NEW (v0.5): A8 blocks a ticket for these
-      - {id: private_property, description: "the dumping is on private property: the property owner is responsible", outcome: handoff_oos, danger_now: redirect_911}
+      # CHANGED (v1.0.1): + values, so code can check it (before, only the model could)
+      - {id: private_property, description: "the dumping is on private property: the property owner is responsible", values: {public_or_private_land: [private property]}, outcome: handoff_oos, danger_now: redirect_911}
     duplicate_window: {radius_m: 50, days: 7, match: []}   # CHANGED: match: [] added
 
 # Global rules by ID. hard: true means the rule MUST be enforced in code (flow.yaml,
@@ -378,6 +385,7 @@ change_log:
   - {version: v0.4, date: 2026-11-18, change: "report_status outcome; trigger ids; SW-MISS trigger dropped; near_school dropped from AN-INJ; private trees go to OOS; rodents in PS-PROP; vague-location rule; D9 added here; English only", reason: "Shravan's v0.3 feedback and Uday's answers"}
   - {version: v0.5, date: 2026-11-18, change: "enforced_by per rule; outcome rule lists rebuilt from the edge cases; routes EMERG and OOS defined; not_handled cases; location triggers defined; A13 kb_search; S8; A8, A12, C1, D5, D6, E2 tightened", reason: "Fixes to the v0.4 shortfalls (Uday's review)"}
   - {version: v1.0, date: 2026-11-18, change: "Frozen for build and evaluation. A11 accepts a named landmark on a street; AN-DEAD private property is escalated; handoff_oos + A13 (general question answered from kb_search); TR-TREE hospital_route reserves 'fallen limb' as the data does", reason: "Final fixes in Operating Policy v1.0"}
+  - {version: v1.0.1, date: 2026-11-20, change: "IL-DUMP: optional field public_or_private_land; the private_property not_handled case lists the value 'private property', so create_ticket refuses it in code (A8). No change to what the policy says: dumping on private property was already handoff_oos", reason: "Gap found checking W4's not_handled code: the case had no field value, so only the model could catch it"}
 
 # KEY MAPPING (for W4 and the Interfaces doc). Interface 2 names -> keys in this file:
 #   codes                -> service_catalogue      (read by policy_lookup, admin, orchestrator)
