@@ -22,6 +22,7 @@ def test_f3_create_ticket_failure_hands_off(llm, sel, fresh_store):
     fresh_store.fail.add("create_ticket")
     llm(
         [tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS})],
     )
     out = handle_turn(None, "bin broken", sel)
@@ -33,6 +34,7 @@ def test_e6_missing_field_after_two_attempts(llm, sel, fresh_store):
     partial = {"location": "12 Oak Street", "bin_type": "recycling"}
     llm(
         [tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": partial}, "a")],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": partial}, "b")],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": partial}, "c")],

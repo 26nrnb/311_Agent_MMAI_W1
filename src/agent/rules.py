@@ -34,6 +34,10 @@ class RuleState:
     not_handled: str | None = None                          # outcome of a case create_ticket refused (A8)
     fired: set[str] = field(default_factory=set)            # rules the tree fired
     wordings: set[str] = field(default_factory=set)         # approved wordings the replies used
+    # for the checks before create_ticket (flow.yaml, W1)
+    searched: set[str] = field(default_factory=set)         # A10: codes search_tickets ran for ("*" = any)
+    status_signal: bool = False                             # A12: a message gave a ticket number or asked for a status
+    new_report: bool = False                                # A12: a later message said it is a new report
 
 
 def unsure_reason(result: dict) -> str | None:
@@ -61,6 +65,7 @@ def record(state: RuleState, name: str, args: dict, result: dict) -> None:
         state.looked_up.add(result["code"])
         state.code = result["code"]
     elif name == "search_tickets" and result.get("ok"):
+        state.searched.add(str(args.get("code") or "*").strip().upper())   # A10
         state.possible_duplicates = result.get("tickets", [])
         state.known_ids.update(t["ticket_id"] for t in state.possible_duplicates)
     elif name == "create_ticket":

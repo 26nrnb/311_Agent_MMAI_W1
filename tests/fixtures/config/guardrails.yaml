@@ -15,6 +15,9 @@
 #                 D6: phone no longer matches digits inside a UUID or longer ID.
 #   v1.0.1 (Nov 20) D2: health_card no longer blanks a ticket number followed by a
 #                 2-letter word ('311-2026-100308 in ...'); health_card_named added.
+#   v1.1 (Nov 20) A12: input_screen.status_request and new_report (status check vs new report).
+#                 A11: location_check.usable (street address, intersection, landmark on a street).
+#                 S5: the injection list also runs on tool arguments (flow.yaml args_injection).
 # Note: the input screen turns each list name below into a flag, so do not add a
 # new list under input_screen without code that handles the flag.
 
@@ -46,7 +49,7 @@ input_screen:
     - '\bend my life\b'
     - '\bwant to die\b'
   # S1 / S5: prompt injection; flagged, treated as data, never obeyed.
-  # S5: the same list must also run on tool arguments (address, description): code to build.
+  # S5: the same list also runs on tool arguments (location, description): flow.yaml args_injection.
   injection:
     - 'ignore (all |any )?(previous|prior|above|your) (instructions|rules|prompt)'
     - '\b(system prompt|developer message)\b'
@@ -59,6 +62,21 @@ input_screen:
     - '\b(speak|talk) (to|with) (a |an )?(human|person|agent|someone|supervisor|manager)\b'
     - '\b(lawyer|sue|lawsuit|legal action)\b'
     - '\b(?:complain|complaint|complaining)\b[^.!?]{0,30}\b(?:staff|worker|crew|driver|employee|inspector|officer)\b'
+  # A12 [hard]: the message is about an existing request. A ticket number (311-YYYY-NNNNNN) counts
+  # too (checked in code). create_ticket is blocked until the resident says it is a new report.
+  status_request:
+    - '\b(?:any|an) update\b'
+    - '\bstatus (?:of|on|for)\b'
+    - '\b(?:check|checking|follow(?:ing)? up) on (?:my|the|a|our) (?:request|ticket|report|complaint)\b'
+    - '\bwhat(?:''s| is) happening with (?:my|the|our) (?:request|ticket|report)\b'
+    - '\b(?:is|has) (?:my|the|our) (?:request|ticket|report) (?:been )?(?:done|closed|fixed|resolved|still open)\b'
+  # A12: the resident says it is a new report. Counts only in a LATER message than the status check
+  # (the agent asks once first, Policy v1.0 A12).
+  new_report:
+    - '\bnew (?:report|request|ticket|problem|issue|one)\b'
+    - '\b(?:file|open|create|make|submit|start) (?:a )?(?:new |another |second )?(?:report|request|ticket)\b'
+    - '\bnot (?:a|about the|about my) status\b'
+    - '^\W*(?:new|a new one|it''s new|new please)\W*$'
 
 redaction:
   # D2 [hard]: never stored; replaced before storage AND before the model sees it
@@ -89,6 +107,22 @@ masking:
   name: '(?i:my name is|this is|i am|i''m)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)'
   # D6: keep the first three characters (G1A), mask the rest ("G1A [POSTAL_CODE]")
   postal_code: '(?i:\b[A-Z]\d[A-Z][ -]?(\d[A-Z]\d)\b)'
+
+location_check:
+  # A11 [hard]: create_ticket needs a usable location: a street address, an intersection, or a named
+  # landmark on a street ("the library on Elm St"). One that matches none of these ("near the big tree",
+  # "somewhere on my way to work") is refused as a missing field, so E6 hands off after two tries.
+  # Compiled case-SENSITIVE; (?i:...) marks parts that ignore case.
+  usable:
+    # a street number and a name: "45 Elm", "12B Oak Street"
+    - '\b\d{1,6}[A-Za-z]?\s+[A-Z][\w''.-]*'
+    # a name and a street word, in any case: "Elm St", "the library on king street"
+    - '(?<![\w''])(?!(?i:my|your|our|their|his|her|the|a|an|this|that|its|on|in|of|to|by|any|one|no|same)\b)[A-Za-z0-9][\w''.-]*\s+(?i:st|street|ave|avenue|rd|road|blvd|boulevard|cres|crescent|dr|drive|pkwy|parkway|hwy|highway)\b'
+    # street words that are also ordinary words need a capital: "Maple Lane", not "bike lane"
+    - '\b[A-Z][\w''.-]*\s+(?:Lane|Ln|Court|Ct|Way|Pl|Place|Terrace|Circle|Cir|Trail|Square|Sq|Gate|Grove|Row|Line)\b'
+    # an intersection: "Queen and Bathurst", "Elm & 2nd", "corner of King"
+    - '\b[A-Z][\w''.-]*\s+(?:and|&|at)\s+(?:[A-Z]|\d+(?:st|nd|rd|th)\b)'
+    - '(?i:\bcorner of\b)\s+[A-Z0-9]'
 
 output_check:
   # C1/C2/C3/C4/C7 [hard]: commitments the agent must never make.
