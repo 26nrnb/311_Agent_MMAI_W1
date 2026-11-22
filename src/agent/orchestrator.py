@@ -4,6 +4,8 @@ handle_turn() runs one resident message through the interaction tree
 (flow.yaml, src/agent/flow.py) at fixed points ("hooks"):
 
   input screen (D2 redaction)      -> "message" tree (E1 911, E8, E7, S1 ...)
+  classifier (in code, A1)         -> "after_classifier" tree (E3, F2); the result goes
+                                      to the model with the message
   model <-> tools loop             -> "before_<tool>" / "after_<tool>" trees
                                       (A2, A8, D5 blocks; E3, C6, M2 guidance; E6 handoff)
   tool or model failure            -> "tool_failure" / "model_failure" (E9)
@@ -24,11 +26,12 @@ from dataclasses import dataclass, field
 
 from src.agent import flow
 from src.agent.outcome import note_reply, outcome
-from src.agent.rules import RuleState, record
+from src.agent.rules import RuleState, record, unsure_reason
 from src.config import app_config, load_prompt, policy
 from src.guardrails import output_check
 from src.guardrails.input_screen import screen
 from src.guardrails.masking import mask, redact
+from src.models import classifier as clf
 from src.models.llm import LLMError, LLMSelection, chat
 from src.tools.errors import fail, ok
 from src.tools.handoff import handoff
@@ -47,6 +50,8 @@ class Session:
     transcript: list[dict] = field(default_factory=list)    # resident-visible turns
     state: RuleState = field(default_factory=RuleState)
     last_seen: float = field(default_factory=time.time)
+    classifier: str | None = None                            # classifier setup (src/eval/setups.yaml)
+    classified: dict | None = None                           # the latest classifier result
 
 
 _SESSIONS: dict[str, Session] = {}
@@ -168,6 +173,9 @@ def _chat_with_retry(session: Session, sel: LLMSelection):
 def _run_tool(session: Session, name: str, args: dict) -> tuple[dict, flow.Outcome | None]:
     """Returns (result for the model, an outcome that ends the turn or None)."""
     st = session.state
+    if name == "classifier":   # runs in code now; a prompt that still asks for it gets the result
+        return ok(**(session.classified or {"code": None, "confidence": 0.0, "top2": []}),
+                  note="already classified for this message"), None
     if name not in TOOLS:
         return fail("bad_arguments", f"no such tool {name!r} (A9)"), None
     if name == "handoff":   # the model decided a person must review this (A6)
@@ -220,8 +228,57 @@ def _run_tool(session: Session, name: str, args: dict) -> tuple[dict, flow.Outco
     return public, None
 
 
-def handle_turn(interaction_id: str | None, user_text: str, sel: LLMSelection) -> dict:
+def _should_classify(st: RuleState) -> bool:
+    """Classify until a code is settled: a sure result, a policy lookup, a ticket or a handoff.
+    A status check (A12) isn't a new request, so it isn't classified."""
+    return not (st.classifier_sure or st.looked_up or st.ticket_ids or st.handed_off
+                or (st.status_signal and not st.new_report))
+
+
+def _classify(session: Session) -> tuple[dict, flow.Outcome, list[str]]:
+    """Run the conversation's classifier on everything the resident has said (D7: their text
+    only), log it, and run the after_classifier tree (E3, F2)."""
+    st = session.state
+    name = session.classifier
+    text = "\n".join(t["text"] for t in session.transcript if t["role"] == "resident")
+    start = time.perf_counter()
+    try:
+        result = ok(**clf.classify_with(name, text))
+    except Exception as e:   # F2: no usable result counts as confidence 0
+        result = {**fail("unavailable", f"classifier failed: {type(e).__name__}"),
+                  "code": None, "confidence": 0.0, "top2": []}
+    # A fine-tuned model reports its own inference time, leaving out its one-off load.
+    latency = result.pop("latency_ms", None)
+    if latency is None:
+        latency = int((time.perf_counter() - start) * 1000)
+    unsure = unsure_reason(result)
+    record(st, "classifier", {}, result)
+    st.classifier_sure = unsure is None
+    session.classified = {k: result.get(k) for k in ("code", "confidence", "top2")}
+    log_event(session, "classifier", model=result.get("setup") or name, latency_ms=latency,
+              outcome="error" if not result["ok"] else "unsure" if unsure else "sure",
+              rule_id="E3" if unsure else None, error_code=result.get("error_code"),
+              text=json.dumps({**session.classified, "why": unsure}))
+    ctx = flow.Ctx(state=st, tool="classifier", result=result)
+    return result, _run_flow(session, "after_classifier", ctx), ctx.guidance
+
+
+def _classifier_note(result: dict) -> str:
+    """What the model is told about the classification."""
+    top = result.get("top2") or []
+    if not result.get("code"):
+        return "Classifier: no code."
+    alt = f"; next {top[1]['code']} {top[1]['confidence']:.2f}" if len(top) > 1 else ""
+    return f"Classifier: {result['code']} {result.get('confidence') or 0:.2f}{alt}."
+
+
+def handle_turn(interaction_id: str | None, user_text: str, sel: LLMSelection,
+                classifier: str | None = None) -> dict:
+    """One resident message. classifier is a setup name; None keeps the conversation's
+    (the default for a new one)."""
     session = get_session(interaction_id)
+    if classifier or not session.classifier:
+        session.classifier = clf.check(classifier)
     scr = screen(user_text)
     session.state.mentioned_ids |= output_check.ids_in(scr.text)   # M3: may be quoted back
     st = session.state                                         # A12: status check or new report?
@@ -236,9 +293,15 @@ def handle_turn(interaction_id: str | None, user_text: str, sel: LLMSelection) -
     out = _run_flow(session, "message", ctx)
     if out.kind in ("reply", "handoff"):
         return _end(session, out)
+    notes = list(ctx.guidance)
+    if _should_classify(st):
+        result, out, guidance = _classify(session)
+        if out.kind in ("reply", "handoff"):
+            return _end(session, out)
+        notes += [_classifier_note(result), *guidance]
     content = scr.text
-    if ctx.guidance:
-        content += "\n\n[" + " ".join(ctx.guidance) + "]"
+    if notes:
+        content += "\n\n[" + " ".join(notes) + "]"
     session.messages.append({"role": "user", "content": content})
 
     for _ in range(app_config()["llm"]["max_tool_steps"]):

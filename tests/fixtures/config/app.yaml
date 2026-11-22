@@ -23,6 +23,10 @@ llm:
 agent:
   system_prompt: agent/system_v1.md   # file under prompts/ (Files tab in /admin)
   session_ttl_minutes: 60
+  # Default route classifier, a setup in src/eval/setups.yaml (e.g. distilroberta_lora).
+  # The chat page and re-runs can pick another. If it isn't installed on a server, the
+  # keyword stub is used instead.
+  classifier: keyword_stub
 
 retrieval:
   # Knowledge base lives in Supabase (kb_documents / kb_chunks).

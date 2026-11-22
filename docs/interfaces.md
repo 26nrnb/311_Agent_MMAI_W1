@@ -80,9 +80,33 @@ The model sees these as tools named `classifier`, `policy_lookup`,
 
 ## Classifier (C)
 
-`classify(text) -> {code, confidence, top2}`; `top2` is
-`[{code, confidence}, ...]`. Same call for prompted and fine-tuned models.
-`src/models/classifier.py` is a keyword stub until the real model lands.
+`make_classifier(name)(text) -> {code, confidence, top2, setup, model}`;
+`top2` is `[{code, confidence}, ...]`, best first; `code` is one of the 10
+route codes (EMERG and OOS included). Same call for every classifier. The
+setups are the `classifier` section of `src/eval/setups.yaml`:
+
+| Setup | Kind | What |
+|---|---|---|
+| `keyword_stub` | keyword | the stub, `classify(text)` |
+| `distilroberta_lora` | hf | fine-tuned DistilRoBERTa, `src/models/fine_tuning/distilroberta` |
+| `modernbert_lora` | hf | fine-tuned ModernBERT-base, `src/models/fine_tuning/ModernBERT-base` |
+
+`hf` setups load a local Hugging Face sequence classifier (safetensors only)
+on first use and need `requirements-ml.txt`. A setup is installed when its
+weights and those libraries are present; `installed()` / `GET /api/classifiers`
+say which and why not. Settings: `max_length`, `temperature` (softmax
+temperature for the confidences). Planned: `*_probe` setups, the untuned base
+model with a trained head, as the baseline.
+
+The agent runs the conversation's classifier **in code**, not as a model
+tool: on each resident message, on everything the resident has said so far
+(D7: their text only), until the code is settled (a sure result, a policy
+lookup, a ticket or a handoff); a status check (A12) isn't classified. The
+result is logged (`classifier` event), the `after_classifier` tree applies
+E3/F2, and the model gets one line with the message, e.g.
+`[Classifier: SW-BIN 0.97; next AN-INJ 0.01.]`. A model that still calls a
+`classifier` tool gets the same result back. The default is `app.yaml`
+`agent.classifier`; if it isn't installed on a server, the keyword stub is used.
 
 ## Event log (D)
 
@@ -90,9 +114,12 @@ Supabase table `interaction_events`:
 
 `event_id, interaction_id, step, model, tokens_in, tokens_out, cost_usd, latency_ms, rule_id, outcome, text (masked)` (+ `created_at`, and `error_code` from migration 0006: the tool's error code on `tool:<name>` events, null otherwise)
 
-`step` values written today: `input_screen`, `model`, `tool:<name>`,
-`flow` (one per tree node visited), `reply` (the text the resident was
-shown). For `flow` the text is JSON `{hook, node, title, rule, check |
+`step` values written today: `input_screen`, `classifier`, `model`,
+`tool:<name>`, `flow` (one per tree node visited), `reply` (the text the
+resident was shown), `rerun` (first event of a re-run). For `classifier`,
+`model` is the setup name, `latency_ms` its time, `outcome` sure / unsure /
+error, `rule_id` E3 when not sure, and the text JSON `{code, confidence,
+top2, why}`. For `flow` the text is JSON `{hook, node, title, rule, check |
 action, observed, branch, next, fired, says?}`; `rule_id` is set only when
 the node fired (a decision's yes branch, or an action).
 For `reply`, `outcome` is the conversation's outcome so far, one of the
@@ -137,9 +164,10 @@ then E9) from setup problems (bad key, unknown model; shown to the user).
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
-| GET | `/api/config` | | site text, providers, default models |
+| GET | `/api/config` | | site text, providers, default models, default classifier |
+| GET | `/api/classifiers` | | `{classifiers: [{name, label, kind, available, reason, loaded}], default}` |
 | GET | `/api/models` | `?provider=ollama\|openrouter` | models with tool support |
-| POST | `/api/chat` | `{interaction_id?, message, provider, model}` + header `X-OpenRouter-Key` (OpenRouter only) | `{interaction_id, reply, rule_id}` |
+| POST | `/api/chat` | `{interaction_id?, message, provider, model, classifier?}` (400 if the classifier isn't installed; none = keep the conversation's, or the default) + header `X-OpenRouter-Key` (OpenRouter only) | `{interaction_id, reply, rule_id}` |
 | GET | `/api/health` | | `{ok, store: supabase\|memory, config: loaded\|unavailable}` |
 
 ## Admin API and config edits (proposed)
@@ -162,10 +190,10 @@ both off). Everything returned about conversations is masked (D6).
 | GET | `/api/admin/handoffs` | `?status=&rule_id=&q=&limit=` | handoffs (masked), counts by status |
 | GET | `/api/admin/handoffs/{ref_id}` | | handoff with transcript, status history |
 | POST | `/api/admin/handoffs/{ref_id}/updates` | `{status?, note?, author?}` | change status (`pending`, `in_review`, `resolved`) and/or add a note |
-| GET | `/api/admin/analytics` | `?bucket=hour\|day\|month&periods=&tz=` | per-period and total requests, outcomes, tokens, latency (p50/p95), costs; by model, handoff rule and code; the cost assumptions |
-| POST | `/api/admin/interactions/{id}/rerun` | `{provider, model}`; header `X-OpenRouter-Key` for OpenRouter | start a re-run (409 if two are running or there is nothing to replay); returns the job |
+| GET | `/api/admin/analytics` | `?bucket=hour\|day\|month&periods=&tz=` | per-period and total requests, outcomes, tokens, latency (p50/p95), costs; by model, handoff rule and code; `classifiers`: per classifier setup, messages, unsure rate, mean confidence and bands, time p50/p95, errors, and how often its code matched the conversation's final code; the cost assumptions |
+| POST | `/api/admin/interactions/{id}/rerun` | `{provider, model, classifier?}` (none = the original's); header `X-OpenRouter-Key` for OpenRouter | start a re-run (409 if two are running or there is nothing to replay); returns the job |
 | GET | `/api/admin/reruns/jobs/{job_id}` | | job: `status` running/done/failed, `done` of `turns`, `rerun_id`, `error` |
-| GET | `/api/admin/reruns` | `?limit=` | originals with their re-runs, each run split into turns (tools, rules, reply, time, tokens), decisions compared with the original; pooled by model; running jobs |
+| GET | `/api/admin/reruns` | `?limit=` | originals with their re-runs, each run split into turns (tools, rules, reply, time, tokens), decisions and classifier codes compared with the original; pooled by model (`by_model`) and by classifier (`by_classifier`); running jobs |
 | PUT | `/api/admin/costs` | `{costs, author?, note?}` | save cost assumptions into the `costs` block of `app.yaml` (checked; 422 with `errors`) |
 | GET / POST | `/api/admin/kb` | POST `{title, content, source?, active?}` | documents; create |
 | PUT / DELETE | `/api/admin/kb/{id}` | PUT as POST | update; delete |

@@ -8,12 +8,34 @@
 #   python -m src.eval.harness classify --setup NAME --test FILE --name heldout
 #   python -m src.eval.harness agent    --setup NAME --test FILE --name heldout
 
-# Classifier setups (harness v1): run through classify(text) only.
-# keyword_stub is the stub in src/models/classifier.py. Any other name is
-# passed to make_classifier(name) once C adds it there (Interfaces doc,
-# section 4), e.g. haiku_zeroshot, haiku_fewshot, sonnet_fewshot, finetuned_v1.
+# Classifier setups (harness v1): run through classify(text) only. These are
+# also the classifiers the chat page, re-runs and /admin can pick
+# (src/models/classifier.py make_classifier). Any setup whose files are
+# present shows as installed.
+#   kind     keyword (the stub) | hf (a Hugging Face sequence classifier)
+#   weights  folder with config.json, model.safetensors and the tokenizer,
+#            relative to the repo root. src/models/fine_tuning is gitignored:
+#            copy the weights there by hand (docs/deployment.md).
+#   label    name shown in the pickers
+#   max_length   tokens kept from the resident's text
+#   temperature  softmax temperature for the confidences (1 = as trained);
+#                fit on a validation set so E3's thresholds mean the same for every classifier
+# Planned (not here yet): *_probe setups, the untuned base model with a head
+# trained on top ({base, head}), as the baseline for the fine-tuned ones.
 classifier:
-  keyword_stub: {}
+  keyword_stub: {kind: keyword, label: Keyword stub}
+  distilroberta_lora:
+    kind: hf
+    label: DistilRoBERTa (fine-tuned)
+    weights: src/models/fine_tuning/distilroberta
+    max_length: 256
+    temperature: 1.0
+  modernbert_lora:
+    kind: hf
+    label: ModernBERT-base (fine-tuned)
+    weights: src/models/fine_tuning/ModernBERT-base
+    max_length: 512
+    temperature: 1.0
 
 # Agent setups (harness v2): the whole agent, end to end.
 #   provider, model  passed to src.models.llm.chat

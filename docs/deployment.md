@@ -54,7 +54,18 @@ Notes:
 - `restart: unless-stopped` brings the container back after a reboot once
   Docker is running.
 - Without Docker: `python run.py serve` (listens on `HOST:PORT` from `.env`,
-  default `127.0.0.1:8311`).
+  default `127.0.0.1:8311`). Add `pip install -r requirements-ml.txt` for the
+  fine-tuned classifiers.
+- **Fine-tuned classifier weights** are gitignored (hundreds of MB), so
+  `git pull` doesn't bring them. Copy the model folders into
+  `src/models/fine_tuning/` next to `docker-compose.yml` on the server
+  (`distilroberta/`, `ModernBERT-base/`, each with `config.json`,
+  `model.safetensors` and the tokenizer files). docker-compose mounts that
+  folder read-only; a restart picks up new ones. Without them those
+  classifiers show as "not installed" and the keyword stub is used. To make
+  one the default, set `agent.classifier` in `app.yaml` (/admin > Files).
+  The image now includes CPU torch and transformers, so the first build after
+  this change takes longer and the image is about 1 GB bigger.
 
 ## 2. Cloudflare Tunnel
 

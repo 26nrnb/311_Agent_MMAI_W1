@@ -141,7 +141,7 @@ def _patched(llm_cache, clf_cache, classify_fn, clf_name):
     from src.eval.cache import key_for
     from src.models import llm
     from src.models.llm import LLMError, LLMResponse
-    from src.tools import registry
+    from src.models import classifier as clf_mod
     from src.tools import store as store_mod
 
     seen: Counter = Counter()   # the same request twice in a case (an F1 retry) gets its own entry
@@ -163,19 +163,19 @@ def _patched(llm_cache, clf_cache, classify_fn, clf_name):
             raise LLMError(v["llm_error"], retryable=v["retryable"])
         return LLMResponse(**v)
 
-    def cached_classifier(text):
+    def cached_classifier(_setup, text):   # the agent's classifier (orchestrator -> clf.classify_with)
         base = key_for("classify", clf_name, text)
         seen[base] += 1
         out = clf_cache.get_or_call(f"{base}:{seen[base]}", lambda: classify_fn(text))
-        return dict(out) | {"ok": True, "error": None, "error_code": None}
+        return dict(out) | {"setup": clf_name}
 
-    old_chat, old_now, old_clf = orchestrator.chat, store_mod._now, registry.TOOLS["classifier"]
+    old_chat, old_now, old_clf = orchestrator.chat, store_mod._now, clf_mod.classify_with
     orchestrator.chat, store_mod._now = cached_chat, (lambda: FROZEN_NOW)
-    registry.TOOLS["classifier"] = cached_classifier
+    clf_mod.classify_with = cached_classifier
     try:
         yield seen
     finally:
-        orchestrator.chat, store_mod._now, registry.TOOLS["classifier"] = old_chat, old_now, old_clf
+        orchestrator.chat, store_mod._now, clf_mod.classify_with = old_chat, old_now, old_clf
 
 
 def _snapshot_config(cache_dir: Path, mode: str) -> tuple[dict, str]:

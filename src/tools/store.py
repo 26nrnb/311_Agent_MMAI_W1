@@ -47,6 +47,12 @@ FIRST_AGENT_TICKET = 500001
 USAGE_COLUMNS = "interaction_id,step,model,tokens_in,tokens_out,cost_usd,latency_ms,rule_id,outcome,created_at"
 MAX_USAGE_ROWS = 200_000
 
+# Events the classifier section of /admin > Analytics reads: the classifier's own
+# results and the code each conversation settled on. Their text is masked JSON
+# (codes and confidences, tool arguments), never the resident's message.
+CLASSIFIER_STEPS = ("classifier", "tool:policy_lookup", "tool:create_ticket")
+CLASSIFIER_COLUMNS = "interaction_id,step,model,latency_ms,outcome,rule_id,error_code,text,created_at"
+
 
 def _utc(ts: datetime) -> str:
     return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -277,6 +283,19 @@ class SupabaseStore:
                 break
         return out
 
+    def classifier_events(self, since: datetime, until: datetime) -> list[dict]:
+        """CLASSIFIER_STEPS events in [since, until), oldest first."""
+        out, page = [], 1000
+        while len(out) < MAX_USAGE_ROWS:
+            rows = self._req("GET", "interaction_events", params=[
+                ("select", CLASSIFIER_COLUMNS), ("step", f"in.({','.join(CLASSIFIER_STEPS)})"),
+                ("created_at", f"gte.{_utc(since)}"), ("created_at", f"lt.{_utc(until)}"),
+                ("order", "created_at.asc,event_id.asc"), ("limit", str(page)), ("offset", str(len(out)))])
+            out += rows
+            if len(rows) < page:
+                break
+        return out
+
     def usage_tickets(self, since: datetime, until: datetime) -> list[dict]:
         """Tickets the agent created in [since, until) (seeded tickets have no conversation)."""
         return self._req("GET", "tickets", params=[
@@ -490,6 +509,11 @@ class MemoryStore:
         cols = USAGE_COLUMNS.split(",")
         return [{k: e.get(k) for k in cols} for e in self.events
                 if e["step"] != "flow" and since <= datetime.fromisoformat(e["created_at"]) < until]
+
+    def classifier_events(self, since: datetime, until: datetime) -> list[dict]:
+        cols = CLASSIFIER_COLUMNS.split(",")
+        return [{k: e.get(k) for k in cols} for e in self.events
+                if e["step"] in CLASSIFIER_STEPS and since <= datetime.fromisoformat(e["created_at"]) < until]
 
     def usage_tickets(self, since: datetime, until: datetime) -> list[dict]:
         return [{"code": t["code"], "opened_at": t["opened_at"]} for t in self.tickets

@@ -21,6 +21,7 @@ class RuleState:
     mentioned_ids: set[str] = field(default_factory=set)    # M3: IDs the resident typed (may be quoted back)
     field_attempts: dict[str, int] = field(default_factory=dict)  # E6
     unsure_count: int = 0                                   # E3
+    classifier_sure: bool = False                           # E3: a sure classification settles the code
     handed_off: bool = False
     code: str | None = None
     confidence: float | None = None
@@ -44,7 +45,8 @@ def unsure_reason(result: dict) -> str | None:
     """E3/F2: why a classifier result is too unsure to act on, or None if it is sure."""
     t = policy()["thresholds"]
     code, conf = result.get("code"), result.get("confidence") or 0.0
-    if not result.get("ok", True) or code not in policy()["service_catalogue"]:
+    pol = policy()   # A1: one of the route codes (catalogue codes and the routes EMERG, OOS)
+    if not result.get("ok", True) or code not in {**pol["service_catalogue"], **(pol.get("routes") or {})}:
         return f"no valid code ({code or 'none'}), treated as confidence 0 (F2)"
     if conf < t["classifier_confidence"]:
         return f"{code} at {conf:.2f}, below {t['classifier_confidence']:.2f}"

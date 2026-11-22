@@ -11,6 +11,8 @@
     busy: false,
     defaults: {},
     modelCache: {},
+    classifier: null,        // setup name (src/eval/setups.yaml); sent with every message
+    classifiers: [],
   };
 
   const els = {
@@ -18,6 +20,7 @@
     modelBtn: $("model-btn"), modelLabel: $("model-label"), panel: $("model-panel"),
     keyRow: $("key-row"), apiKey: $("api-key"), modelInput: $("model-input"),
     modelList: $("model-list"), modelHint: $("model-hint"),
+    classifier: $("classifier-select"), classifierHint: $("classifier-hint"),
   };
 
   async function init() {
@@ -32,8 +35,39 @@
     for (const btn of document.querySelectorAll(".seg button")) {
       if (!cfg.providers.includes(btn.dataset.provider)) btn.remove();
     }
+    state.classifier = cfg.default_classifier || null;
     setProvider(cfg.default_provider);
+    loadClassifiers();
     els.input.focus();
+  }
+
+  // ---------- classifier ----------
+  async function loadClassifiers() {
+    try {
+      const r = await fetch("/api/classifiers");
+      if (!r.ok) throw new Error();
+      const data = await r.json();
+      state.classifiers = data.classifiers;
+      if (!state.classifier) state.classifier = data.default;
+    } catch {
+      els.classifier.replaceChildren(new Option("Default", ""));
+      els.classifierHint.textContent = "Can't load the classifier list; the server's default is used.";
+      els.classifierHint.classList.add("error");
+      return;
+    }
+    // Only installed classifiers can be picked; the others show why not.
+    els.classifier.replaceChildren(...state.classifiers.map((c) => {
+      const opt = new Option(c.available ? c.label : `${c.label} (not installed)`, c.name, false, c.name === state.classifier);
+      opt.disabled = !c.available;
+      if (c.reason) opt.title = c.reason;
+      return opt;
+    }));
+    refreshModelButton();
+  }
+
+  function classifierLabel() {
+    const c = state.classifiers.find((x) => x.name === state.classifier);
+    return c ? c.label : state.classifier;
   }
 
   // ---------- model settings ----------
@@ -44,7 +78,9 @@
   function refreshModelButton() {
     const m = state.model[state.provider];
     const needsKey = state.provider === "openrouter" && !state.apiKey;
-    els.modelLabel.textContent = needsKey ? "Add OpenRouter key" : (m || "Choose model");
+    const clf = classifierLabel();
+    els.modelLabel.textContent = needsKey ? "Add OpenRouter key" : `${m || "Choose model"}${clf ? ` · ${clf}` : ""}`;
+    els.modelBtn.title = clf ? `Model: ${m || "none"}. Classifier: ${clf}.` : "";
     els.modelBtn.classList.toggle("needs-setup", !ready());
     updateSend();
   }
@@ -114,6 +150,10 @@
   for (const btn of document.querySelectorAll(".seg button")) {
     btn.addEventListener("click", () => setProvider(btn.dataset.provider));
   }
+  els.classifier.addEventListener("change", () => {
+    state.classifier = els.classifier.value || null;   // applies from the next message
+    refreshModelButton();
+  });
   els.apiKey.addEventListener("input", () => { state.apiKey = els.apiKey.value.trim(); refreshModelButton(); });
   els.modelInput.addEventListener("input", () => {
     state.model[state.provider] = els.modelInput.value.trim();
@@ -157,6 +197,7 @@
           message: text,
           provider: state.provider,
           model: state.model[state.provider],
+          classifier: state.classifier,
         }),
       });
       const data = await r.json();

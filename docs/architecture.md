@@ -29,7 +29,8 @@ flowchart LR
       orch["Orchestrator<br/>agent/orchestrator.py"]
       flow["Interaction tree engine<br/>agent/flow.py"]
       guards["Guardrails<br/>input screen, masking, output check"]
-      tools["Tools<br/>classifier, policy_lookup, search_tickets,<br/>create_ticket, get_status, handoff, kb_search"]
+      clf["Classifier<br/>models/classifier.py<br/>keyword stub or fine-tuned"]
+      tools["Tools<br/>policy_lookup, search_tickets,<br/>create_ticket, get_status, handoff, kb_search"]
       llm["LLM client<br/>models/llm.py"]
       config["Config cache<br/>config.py"]
       sync["Sync thread<br/>rag/ingest.py"]
@@ -52,6 +53,7 @@ flowchart LR
   server --> admin
   orch --> guards
   orch --> flow
+  orch --> clf
   orch --> tools
   orch --> llm
   llm --> ollama
@@ -159,7 +161,7 @@ orchestrator runs one tree at each fixed point of a turn (a "hook"):
 | Hook | When | Default tree (rules) |
 |---|---|---|
 | `message` | a resident message arrives, after D2 redaction | D2 log, E1 911, E8 crisis + handoff, E7 handoff, S1 note to the model |
-| `after_classifier` | classifier returned | E3 unsure: ask one clarifying question (repeat handoff switched off until the real classifier) |
+| `after_classifier` | the classifier ran on a resident message (in code, before the model) | E3 unsure: ask one clarifying question, hand off if still unsure |
 | `after_search_tickets` | search returned | C6 duplicate found: use the duplicate wording, don't file a second |
 | `before_create_ticket` | before creating | A4 already handed off, A8 one ticket, A2 look up first (block) |
 | `after_create_ticket` | create returned | M3 confirm with the exact ID; A4 missing fields: M2 ask one, E6 hand off past the limit |
@@ -258,10 +260,26 @@ ticket filed instead.
 
 ## Re-runs
 
-`/admin` > Interactions > *Re-run with another model* replays a logged
-conversation on another model (`src/agent/rerun.py`) so the team can compare
-models on real requests. Analytics > Model re-runs shows each original and
-its re-runs side by side, turn by turn.
+`/admin` > Interactions > *Re-run with another model or classifier* replays a
+logged conversation on another model and/or classifier (`src/agent/rerun.py`)
+so the team can compare them on real requests. The classifier defaults to the
+original's, so changing only one of the two isolates its effect. Analytics >
+Re-runs shows each original and its re-runs side by side, turn by turn,
+including each turn's classifier code and confidence, pooled by model and by
+classifier.
+
+## Classifiers
+
+The route classifier runs in code on each resident message, before the
+model, until the request's code is settled (`src/models/classifier.py`,
+`_classify` in the orchestrator). Which one is a setup name from
+`src/eval/setups.yaml`: the keyword stub or a fine-tuned model loaded from
+`src/models/fine_tuning` (gitignored; mounted into the container). The chat
+page's model panel picks it per conversation, re-runs pick it per run, and
+`app.yaml` `agent.classifier` sets the default. Each run is a `classifier`
+event (setup, code, confidence, time), which Analytics > Classifiers sums
+per setup: unsure rate, confidence bands, time, and agreement with the code
+the conversation settled on.
 
 - **What is replayed:** the resident's messages as logged. Logs are masked
   (D6), so each mask tag gets a fixed stand-in (`[STREET_NUMBER]` becomes

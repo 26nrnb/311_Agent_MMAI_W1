@@ -17,6 +17,11 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-7: #6250d6;
+  /* Ordered bands (classifier confidence, low to high): one hue, light to dark */
+  --band-0: #cfe0f6;
+  --band-1: #93bcec;
+  --band-2: #4f8fdf;
+  --band-3: #1d5fb3;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -36,6 +41,10 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-7: #9085e9;
+    --band-0: #3d5f8c;
+    --band-1: #5282c4;
+    --band-2: #74a6e8;
+    --band-3: #b9d6f8;
     color-scheme: dark;
   }
 }

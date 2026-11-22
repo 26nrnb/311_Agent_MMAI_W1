@@ -1,0 +1,11 @@
+# Libraries for the fine-tuned classifiers (src/models/classifier.py, kind: hf).
+# Separate from requirements.txt so the tests and CI run without them: the
+# keyword stub needs none of this, and a classifier whose libraries are missing
+# shows as "not installed". The Docker image installs both files.
+# CPU build of torch: the classifiers take ~10-30 ms a message on CPU.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+transformers==5.23.0   # the version the weights were saved with (config.json)
+tokenizers==0.23.3
+safetensors==0.8.0
+huggingface_hub==2.4.0

@@ -1,4 +1,7 @@
-"""Tool registry: the only actions the model can take (A1-A6, plus kb_search for C5).
+"""Tool registry: the only actions the model can take (A2-A6, plus kb_search for C5).
+
+The classifier (A1) is not a tool: the orchestrator runs the conversation's
+classifier on each resident message and gives the model the result.
 
 TOOL_SCHEMAS is what the model sees (OpenAI function-calling format).
 There is deliberately no edit/close/cancel/reprioritize tool (A7 [hard]).
@@ -7,8 +10,6 @@ model only supplies the rule ID and a short reason.
 """
 from __future__ import annotations
 
-from src.models.classifier import classify
-from src.tools.errors import ok
 from src.tools.handoff import handoff
 from src.tools.knowledge import kb_search
 from src.tools.policy import policy_lookup, route_codes, valid_codes
@@ -25,8 +26,6 @@ def _fn(name: str, description: str, properties: dict, required: list[str]) -> d
 def tool_schemas() -> list[dict]:
     codes = valid_codes()
     return [
-        _fn("classifier", "Classify the resident's request into a service code. Returns code, confidence and top2.",
-            {"text": {"type": "string", "description": "The resident's description of the issue"}}, ["text"]),
         _fn("policy_lookup", "Get a service code's unit, required fields, escalation triggers and the cases not to ticket "
             "(not_handled). Call before asking for fields or creating a ticket. For EMERG or OOS it returns where the "
             "request goes and the approved reply; those never create a ticket.",
@@ -49,7 +48,6 @@ def tool_schemas() -> list[dict]:
 
 
 TOOLS = {
-    "classifier": lambda text: ok(**classify(text)),
     "policy_lookup": policy_lookup,
     "search_tickets": search_tickets,
     "create_ticket": create_ticket,
