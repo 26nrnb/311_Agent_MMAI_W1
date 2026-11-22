@@ -7,7 +7,7 @@
     python run.py eval       run the eval harness (see `python run.py eval --help`)
     python run.py score      score results files into results/summary.json and summary.md
     python run.py reproduce  replay every recorded run and rebuild every results table (make reproduce)
-    python run.py demo       rehearse the five scripted demo cases (docs/demo_cases.md)
+    python run.py demo       rehearse the six scripted demo cases (docs/demo_cases.md)
 """
 from __future__ import annotations
 

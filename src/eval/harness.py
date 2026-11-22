@@ -58,9 +58,9 @@ COLUMNS = ["run_id", "setup", "test_set", "interaction_id", "expected_code", "pr
            "expected_ticket_id", "linked_ticket_id", "policy_violation", "invented_commitment", "pii_leak",
            "adversarial_type", "adversarial_pass", "tokens_in", "tokens_out", "cost_usd",
            "turn_latencies_ms", "failure_type"]
-EXTRA = ["difficulty", "subtype", "outcome_source", "violation_rules", "pii_findings", "tickets_created",
-         "handoff_rules", "confidence", "judge_reason", "error",
-         "expected_trigger_id", "agent_trigger_id"]   # recall per trigger (F, Nov 20)
+# Extra columns, in the order docs/results_format.md lists them.
+EXTRA = ["expected_trigger_id", "agent_trigger_id", "difficulty", "subtype", "outcome_source", "violation_rules",
+         "pii_findings", "tickets_created", "handoff_rules", "confidence", "judge_reason", "error"]
 
 
 class RunError(RuntimeError):
@@ -250,6 +250,23 @@ def agent_trigger(handoffs: list[dict], events: list[dict]) -> str | None:
     return found
 
 
+def case_errors(events: list[dict], limit: int = 300) -> str:
+    """results_format.md `error`: every tool or model error in the case, separated by ';'.
+    A tool's error_code is used when the event carries one (migration 0006), else its message."""
+    found = []
+    for e in events:
+        step = e.get("step") or ""
+        if e.get("outcome") != "error" or not (step == "model" or step.startswith("tool:")):
+            continue
+        detail = e.get("error_code")
+        if not detail:
+            data = _json(e.get("text")) or {}
+            detail = data.get("error") or (data.get("result") or {}).get("error") or e.get("text") or "error"
+        found.append(f"{step}: {str(detail)[:80]}")
+    text = ";".join(dict.fromkeys(found))          # keep order, drop repeats (an F1 retry logs twice)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
 def _conversation(store, session, outs, events):
     from src.eval.outcome import OUTCOMES, Conversation
     conv = Conversation(events=events)
@@ -336,14 +353,17 @@ def run_agent_case(case, sel, cfg_files, tickets, judge_ctx=None) -> tuple[dict,
             "fields_complete": _b(fields_ok), "linked_ticket_id": linked or "",
             "policy_violation": _b(violated), "invented_commitment": _b(invented), "pii_leak": _b(leak),
             "adversarial_pass": _b(adv_pass),
-            "tokens_in": sum(e.get("tokens_in") or 0 for e in models),
-            "tokens_out": sum(e.get("tokens_out") or 0 for e in models),
+            # results_format.md: tokens and cost are summed over the conversation, judge included
+            "tokens_in": sum(e.get("tokens_in") or 0 for e in models) + (verdict.get("tokens_in") or 0),
+            "tokens_out": sum(e.get("tokens_out") or 0 for e in models) + (verdict.get("tokens_out") or 0),
             "cost_usd": round(sum(e.get("cost_usd") or 0 for e in models) + (verdict.get("cost_usd") or 0), 8),
             "turn_latencies_ms": ";".join(str(t) for t in _turn_latencies(events)),
             "outcome_source": source, "violation_rules": ";".join(found.rules),
-            "pii_findings": ";".join(found.pii), "tickets_created": len(conv.tickets),
+            "pii_findings": ";".join(found.pii),
+            "tickets_created": ";".join(t.get("ticket_id") or "" for t in conv.tickets),
             "handoff_rules": ";".join(h.get("rule_id") or "" for h in conv.handoffs),
             "judge_reason": verdict.get("reason", ""),
+            "error": case_errors(events),
             "agent_trigger_id": conv.agent_trigger_id or "",
             "_replies": conv.replies,   # unmasked, for the demo rehearsal only; never written to a file
         }

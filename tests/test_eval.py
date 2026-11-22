@@ -176,8 +176,8 @@ def test_classifier_run_scores_route_accuracy(tmp_path):
 
 def test_ticket_fixtures_load_from_json(tmp_path):
     rows, source = harness.load_tickets(str(harness.ROOT / "data" / "demo" / "demo_tickets.json"))
-    assert source == "demo_tickets.json" and rows[0]["ticket_id"] == "311-2026-900001"
-    assert rows[0]["opened_at"].endswith("+00:00") and rows[0]["location_norm"] == "45 elm street"
+    assert source == "demo_tickets.json" and rows[0]["ticket_id"] == "311-2026-100140"
+    assert rows[0]["opened_at"].endswith("+00:00") and rows[0]["location_norm"] == "92 reed lane"
 
 
 # ---------------------------------------------------------------- scoring
@@ -210,8 +210,33 @@ def test_success_needs_every_condition():
 
 def test_demo_cases_are_valid_records():
     cases = testset.load(harness.ROOT / "data" / "demo" / "demo_cases.jsonl")
-    assert [c.case_id for c in cases] == [f"demo_{i}" for i in range(1, 6)]
+    assert [c.case_id for c in cases] == [f"demo_{i}" for i in range(1, 7)]
     assert any(c.turns for c in cases)    # the ambiguous dumping case answers the clarifying question
+
+
+def test_demo_tickets_work_with_the_ticket_tools(fresh_store, monkeypatch):
+    """Cases 4 and 6 need two v3 store tickets (docs/demo_cases.md); no other case may match a ticket
+    by accident, and every gold value must pass create_ticket's closed-value check. Checked on the
+    demo's two-ticket copy and, when it is present, on the full store in data/tickets.db."""
+    from src.eval import demo
+    from src.tools import store as store_mod, tickets as tk
+    from src.tools.policy import policy_lookup
+    monkeypatch.setattr(store_mod, "_now", lambda: harness.FROZEN_NOW)   # duplicate windows use the store clock
+    cases = testset.load(demo.DEMO_CASES)
+    for path in {demo.DEMO_TICKETS, demo.ticket_source()}:
+        fresh_store.tickets, _ = harness.load_tickets(str(path))
+        for c in cases:
+            pol = policy_lookup(c.expected_code)
+            if c.expected_action == "report_status":
+                got = tk.get_status(c.ticket_ref, tk._postal_code(c.message))
+                assert got["ok"] and got["status"] == "in_progress", c.case_id
+                assert not tk.get_status(c.ticket_ref, "G1A 1A1")["ok"]    # D5: wrong postal code
+                continue
+            days = pol["duplicate_window"].get("days")
+            found = tk.search_tickets(c.gold_fields["location"], c.expected_code, days)["tickets"]
+            expected = [c.ticket_ref] if c.expected_action == "link_duplicate" else []
+            assert [t["ticket_id"] for t in found] == expected, (c.case_id, path.name)
+            assert not tk._check_values(pol, dict(c.gold_fields)), c.case_id
 
 
 # ---------------------------------------------------------------- policy v1.0 changes (F's review, Nov 20)
@@ -240,7 +265,7 @@ def test_status_check_end_to_end(tmp_path, monkeypatch):
         "I'm an automated assistant. Request 311-2026-000777 is in progress with Transportation."))
     row = score.read(harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", results_dir=tmp_path / "r",
                                  tickets_path=str(tickets), quiet=True))[0]
-    assert (row["actual_action"], row["predicted_code"], row["tickets_created"]) == ("report_status", "RD-POT", "0")
+    assert (row["actual_action"], row["predicted_code"], row["tickets_created"]) == ("report_status", "RD-POT", "")
     # Policy v1.0 D6 masks postal codes in logs after the first three characters (guardrails.yaml
     # v1.0 masking.postal_code), so the logged "G1L [POSTAL_CODE]" is not a leak (G8).
     assert row["pii_findings"] == "" and row["pii_leak"] == "false"
@@ -280,10 +305,26 @@ def test_trigger_columns(tmp_path, monkeypatch):
     out = harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", results_dir=tmp_path / "r", quiet=True)
     row = score.read(out)[0]
     assert row["expected_trigger_id"] == "swerving" and row["agent_trigger_id"] == ""   # agent logs none yet
-    assert list(row)[-2:] == ["expected_trigger_id", "agent_trigger_id"]
+    # results_format.md order: the documented columns, then the extras starting with the two trigger columns
+    assert list(row) == harness.COLUMNS + harness.EXTRA and harness.EXTRA[:2] == ["expected_trigger_id", "agent_trigger_id"]
     m = score.agent_metrics([row])
     assert m["hazard_recall_by_trigger"]["swerving"]["value"] == 1.0
     assert m["trigger_named_by_trigger"]["swerving"]["value"] == 0.0
+    # the record may write the trigger as CODE/trigger_id; the agent's trigger still matches it
+    named = score.agent_metrics([row | {"expected_trigger_id": "RD-POT/swerving", "agent_trigger_id": "swerving"}])
+    assert named["trigger_named_by_trigger"]["RD-POT/swerving"]["value"] == 1.0
+
+
+def test_tickets_and_errors_columns(tmp_path, monkeypatch):
+    tests = _write_cases(tmp_path / "cases.jsonl", _case())
+    monkeypatch.setattr(llm, "chat", _bin_script())
+    row = score.read(harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", results_dir=tmp_path / "r",
+                                 quiet=True))[0]
+    assert row["tickets_created"] == "311-2026-500001" and row["error"] == ""     # ticket IDs, not a count
+    monkeypatch.setattr(llm, "chat", ScriptedLLM(llm.LLMError("timed out"), llm.LLMError("timed out")))
+    row = score.read(harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", run_id="outage",
+                                 results_dir=tmp_path / "r", quiet=True))[0]
+    assert row["error"] == "model: timed out"                                     # one entry for the retried call
 
 
 def test_agent_trigger_is_read_wherever_it_is_logged():

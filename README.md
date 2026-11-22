@@ -151,7 +151,7 @@ src/eval/          evaluation harness (W5/W6): harness.py runs setups, score.py 
                    outcome.py/checks.py score a conversation, setups.yaml names every setup
 supabase/          SQL migrations and seed data
 data/test/         locked test sets (read only by the eval harness; git-ignored, only LOCK.md is committed)
-data/demo/         the five scripted demo cases and their seed tickets (demo material, not test data)
+data/demo/         the six scripted demo cases and the two store tickets they need (demo material, not test data)
 tests/             pytest suite (no keys or network needed); fixtures/config is the test config
 results/           results files, manifests and summary (committed); cache/ and events/ (shared, not committed)
 docs/              interfaces, architecture, decisions, evaluation, demo script, prompt changelog, deployment
@@ -168,7 +168,7 @@ docs/              interfaces, architecture, decisions, evaluation, demo script,
 | `python run.py eval classify ...` / `eval agent ...` | | Run a setup over a locked test set ([docs/evaluation.md](docs/evaluation.md)) |
 | `python run.py reproduce` | `make reproduce` | Rebuild every results table from cached model outputs, no API keys |
 | `python run.py score` | `make score` | Score `results/*.csv` into `results/summary.json` and `summary.md` |
-| `python run.py demo` | `make demo` | Rehearse the five scripted demo cases ([docs/demo_cases.md](docs/demo_cases.md)) |
+| `python run.py demo` | `make demo` | Rehearse the six scripted demo cases ([docs/demo_cases.md](docs/demo_cases.md)) |
 | `docker compose up -d --build` | | Build and start the site in Docker |
 
 ## Evaluation and reproducing the results
@@ -193,7 +193,7 @@ How cases are scored, what each file holds and the known limits are in [docs/eva
 
 ## Demo
 
-The five scripted cases (routine missed collection, ambiguous dumping report, road hazard, duplicate, prompt injection) run on the chat page. Rehearse them first with `python run.py demo`. The script, what to point out, and what to do if something goes wrong are in [docs/demo_cases.md](docs/demo_cases.md).
+The six scripted cases (routine missed collection, ambiguous dumping report, road hazard, duplicate, prompt injection, status check) run on the chat page against the v3 ticket store. Copy `tickets.db` from the team's `data_v3` folder to `data/tickets.db` (git-ignored), then rehearse them with `python run.py demo`. The script, what to point out, and what to do if something goes wrong are in [docs/demo_cases.md](docs/demo_cases.md).
 
 ## How to extend: add a service category in an afternoon
 
@@ -226,7 +226,7 @@ The agent never hard-codes a category, so a new one is mostly configuration:
 - [docs/decisions.md](docs/decisions.md): what we chose and why.
 - [docs/metrics.md](docs/metrics.md) and [docs/results_format.md](docs/results_format.md): what we measure, the go thresholds, and the results file columns.
 - [docs/evaluation.md](docs/evaluation.md): the eval harness, `make reproduce`, and how a case is scored.
-- [docs/demo_cases.md](docs/demo_cases.md): the five scripted demo cases.
+- [docs/demo_cases.md](docs/demo_cases.md): the six scripted demo cases.
 - [docs/deployment.md](docs/deployment.md): running behind Cloudflare Tunnel.
 
 Keys only in `.env` (git-ignored). Never commit real personal data.
