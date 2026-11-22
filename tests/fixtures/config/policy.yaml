@@ -46,9 +46,10 @@
 # v1.0.1 (Nov 20): IL-DUMP dumping on private property is now marked by a field value
 # (public_or_private_land: private property), so create_ticket can refuse it in code (A8).
 # v1.0.2 (Nov 21): D2 enforced_by also names create_ticket, which now refuses D2 data in a field.
+# v1.0.3 (Nov 21): A4 enforced_by also names the closed-value check (field_options) in create_ticket.
 # ---------------------------------------------------------------------------------------
 
-version: v1.0.2   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0 | (v1.0.1): IL-DUMP private-property value | (v1.0.2): D2 enforced_by
+version: v1.0.3   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0 | (v1.0.1): IL-DUMP private-property value | (v1.0.2): D2 enforced_by | (v1.0.3): A4 enforced_by
 city: Gilead
 
 thresholds:
@@ -296,7 +297,7 @@ rules:
   A1: {text: "Classify a request into one of the 10 route codes; a catalogue code must exist in the policy store", hard: true, enforced_by: "flow classifier_unsure + rules.unsure_reason"}   # CHANGED (v0.2): 10 route codes
   A2: {text: "Look up the category's policy before asking for fields or creating a ticket", hard: true, enforced_by: "flow before_create_ticket: looked_up"}
   A3: {text: "Search open tickets near a location; read only", hard: false, enforced_by: "tool search_tickets (read only)"}
-  A4: {text: "Create a ticket only after all required fields are present and no escalation trigger fired", hard: true, enforced_by: "tool create_ticket (required fields) + flow before_create_ticket"}
+  A4: {text: "Create a ticket only after all required fields are present and no escalation trigger fired", hard: true, enforced_by: "tool create_ticket (required fields; closed field values from field_options, invalid_value) + flow before_create_ticket"}   # CHANGED (v1.0.3): + closed field values
   A5: {text: "Report status only with the ticket number and the postal code on it", hard: true, enforced_by: "flow status_needs_postal + tool get_status"}
   A6: {text: "Hand off to a human or redirect to 911 whenever the escalation rules require it", hard: false, enforced_by: "tool handoff"}   # CHANGED: "section 5" -> "the escalation rules" (wording only)
   A7: {text: "Never edit, close, cancel, merge or reprioritize a ticket", hard: true, enforced_by: "tool registry (no edit, close or cancel tool)"}
@@ -388,6 +389,7 @@ change_log:
   - {version: v1.0, date: 2026-11-18, change: "Frozen for build and evaluation. A11 accepts a named landmark on a street; AN-DEAD private property is escalated; handoff_oos + A13 (general question answered from kb_search); TR-TREE hospital_route reserves 'fallen limb' as the data does", reason: "Final fixes in Operating Policy v1.0"}
   - {version: v1.0.1, date: 2026-11-20, change: "IL-DUMP: optional field public_or_private_land; the private_property not_handled case lists the value 'private property', so create_ticket refuses it in code (A8). No change to what the policy says: dumping on private property was already handoff_oos", reason: "Gap found checking W4's not_handled code: the case had no field value, so only the model could catch it"}
   - {version: v1.0.2, date: 2026-11-21, change: "D2 enforced_by: + tool create_ticket (pii_rejected). No change to what the policy says", reason: "create_ticket now refuses a field holding D2 data instead of redacting it and filing the ticket (D-027)"}
+  - {version: v1.0.3, date: 2026-11-21, change: "A4 enforced_by: + closed field values (create_ticket refuses a value not in field_options, invalid_value). No change to what the policy says", reason: "create_ticket now checks closed field values (D-026)"}
 
 # KEY MAPPING (for W4 and the Interfaces doc). Interface 2 names -> keys in this file:
 #   codes                -> service_catalogue      (read by policy_lookup, admin, orchestrator)
