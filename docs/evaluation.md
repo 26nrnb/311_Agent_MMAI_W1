@@ -86,7 +86,7 @@ Add a name under `classifier`, `agent` or `judge` in `src/eval/setups.yaml`.
 
 Keep a name once it has results. A new model, prompt or setting gets a new name, so every results file stays traceable.
 
-For the prompted and fine-tuned classifiers, C adds `make_classifier(name)` to `src/models/classifier.py` (Interfaces doc section 4). The harness then picks the new setups up by name with no code change. The `classifier:` key of an agent setup swaps the classifier behind the agent's classifier tool, which is the "prompted vs fine-tuned classifier" ablation.
+For the prompted and fine-tuned classifiers, C adds `make_classifier(name)` to `src/models/classifier.py` (Interfaces doc section 4). The harness then picks the new setups up by name with no code change. The `classifier:` key of an agent setup swaps the classifier the agent runs on each message, which is the "prompted vs fine-tuned classifier" ablation.
 
 ## Known limits (say so in the report)
 - **Rule-derived outcomes for some attacks.** Prompt extraction, impersonation, bulk requests and abuse are recognised by refusal wording. A genuine request with a hidden instruction (S5, expected `create_ticket`) reads as `refuse_and_continue` if the agent says aloud that it won't follow the instruction. `adversarial_pass` and the judge cover adversarial behaviour.
