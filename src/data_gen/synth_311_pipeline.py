@@ -143,6 +143,13 @@ PROMPT_CHANGELOG = [
      "emergency or look-alike text) so the split puts one scenario of each in test. New standalone "
      "recheck_protected (--recheck-protected): removes rows too similar to the hand-written / policy "
      "test cases in --protected-dir from the existing files, with no model calls."),
+    ("311-v5 (QC 5.3)", "2026-11-21", "Prompt unchanged. Review of data 5.2: 6 emergency look-alikes "
+     "(fire pit, barbecue) described a fire out of control, spreading or about to start, which is E1, "
+     "under a handoff_oos label; one also had an invented address in capitals ('123 OAK STREET'). New "
+     "QC: look_alike_became_emergency (English), raw_address_in_template also in capitals. AN-DEAD "
+     "private_property cases always use a street address (a landmark such as 'the park entrance' "
+     "read as public). New drop_rows (--drop-ids, --drop-reason): removes named rows from an existing "
+     "run, recorded in rejected.jsonl and the manifest; used to remove the 6 look-alikes."),
 ]
 
 # The FICTIONAL city the 311 service belongs to. Fictional on purpose: we never
@@ -1503,6 +1510,25 @@ RAW_ADDRESS_RE = re.compile(r"\b\d{1,4}\s+(?:at\s+)?[A-Z][a-z]+\s+(?:" + "|".joi
     r"|\b\d{1,4}\s+(?:at\s+|on\s+)?\{street\}")      # an invented house number before {street}
 # 311 v5: a named street written out instead of a placeholder (pilot: "Main Street near ...").
 _SUFFIX = r"(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Lane|Ln|Court|Ct|Cres|Crescent|Way|Hwy)"
+# QC 5.3: the same slip written in capitals ("123 OAK STREET", shouting personas).
+RAW_ADDRESS_CAPS_RE = re.compile(r"\b\d{1,5}\s+[A-Z]{2,}(?:\s[A-Z]{2,})?\s+(?:STREET|ST|AVENUE|AVE|ROAD|RD|"
+                                 r"BLVD|BOULEVARD|DRIVE|DR|LANE|LN|COURT|CT|CRES|CRESCENT|WAY)\b")
+# QC 5.3: an emergency look-alike that the model turned into a real emergency (E1).
+DANGER_ESCALATION_RE = re.compile(r"out of control|spreading|wildfire|bonfire|practically an emergency|"
+                                  r"flames? (?:are |is )?(?:really |getting |so )*(?:high|big|huge|tall)|"
+                                  r"about to (?:start|catch|spread)|catch(?:ing)? fire|on fire", re.I)
+_HYPOTHETICAL_RE = re.compile(r"\b(could|might|may|worried|afraid|scared|before|in case|not|thought|wondered)\b[^.!?]{0,25}$", re.I)
+
+
+def look_alike_became_emergency(text: str) -> bool:
+    """True when a danger phrase is stated as fact ("it's out of control"), not as a
+    worry ("worried it could get out of control")."""
+    for m in DANGER_ESCALATION_RE.finditer(text):
+        if not _HYPOTHETICAL_RE.search(text[max(0, m.start() - 40):m.start()]):
+            return True
+    return False
+
+
 RAW_STREET_RE = re.compile(r"\b(?!(?:No|Either|Any|By|The|This|That|One|Each|Which|Every|Some|Our|My|Your|Bike|Bus|Cycle|Fire|Parking|Turning|Traffic|Back|Car|Express|Service|Side)\s)"
                            r"[A-Z][a-z]+(?:\s[A-Z][a-z]+)?\s" + _SUFFIX + r"\b")
 # 311: location placeholders, used to check the location instruction was followed
@@ -1588,10 +1614,14 @@ def qc(record: Dict[str, Any], cfg: Optional[Cfg] = None) -> Tuple[bool, List[st
             reasons.append(f"omitted_field_present:{f}")
 
     # 311 v2: addresses must come from placeholders (pilot: a second, invented address).
-    if RAW_ADDRESS_RE.search(raw):
+    if RAW_ADDRESS_RE.search(raw) or RAW_ADDRESS_CAPS_RE.search(re.sub(r"\{[a-z_]+\}", " ", raw)):
         reasons.append("raw_address_in_template")
     elif RAW_STREET_RE.search(re.sub(r"\{[a-z_]+\}", " ", raw)):      # 311 v5
         reasons.append("raw_street_in_template")
+    # QC 5.3: a look-alike must stay harmless (otherwise E1 applies and the label is wrong).
+    if (record.get("subtype") == "emerg_look_alike" and record.get("lang") == "en"
+            and look_alike_became_emergency(record.get("message") or "")):
+        reasons.append("look_alike_became_emergency")
     # 311 v5: private-property wording where the label assumes public property.
     if record.get("lang") == "en" and must_be_public(record) and PRIVATE_WORDS_RE.search(low):
         reasons.append("private_property_added")
@@ -1763,6 +1793,8 @@ def _scenario(difficulty: str, subtype: str, spec: Dict[str, Any], rng: random.R
                 for f, vals in TRIGGER_FIELD_VALUES.get(code, {}).get(tid, {}).items():
                     fields[f] = rng.choice(vals)
                 fields.update(TRIGGER_FIXED_FIELDS.get(code, {}).get(tid, {}))   # data 5.2
+                if tid == "private_property":       # QC 5.3: a landmark reads as public property
+                    t["location_style"] = "street address"
         if subtype == "vague_category":       # 311 v2: no details, two confusable categories
             other = rng.choice(CONFUSABLE[code])
             t["secondary_codes"] = [other]
@@ -2388,6 +2420,45 @@ def run_topup_5_2(cfg: Cfg, client: "LLMClient", force: bool = False,
                       drop_mask=bad_private, force=force, verbose=verbose)
 
 
+def drop_rows(cfg: Cfg, ids: Iterable[str], reason: str, verbose: bool = True) -> Dict[str, Any]:
+    """QC 5.3: remove named rows (found in human review) from an existing run.
+
+    Rows leave kept/train/test and the sealed file, go to rejected.jsonl with the reason, and the
+    manifest records the removal under 'removals'. No model calls. Unknown ids are reported.
+    """
+    out = Path(cfg.out_dir)
+    ids = {i.strip() for i in ids if i and i.strip()}
+    dfs = {n: pd.read_json(out / f"{n}.jsonl", lines=True) for n in ("kept", "train", "test", "rejected")}
+    sealed_path = Path(cfg.sealed_dir) / "adversarial_sealed.jsonl"
+    sealed = pd.read_json(sealed_path, lines=True) if sealed_path.exists() else pd.DataFrame(columns=["id"])
+    found = ids & set(dfs["kept"]["id"])
+    missing = sorted(ids - found)
+    removed = dfs["kept"][dfs["kept"]["id"].isin(found)].copy()
+    removed["qc_ok"] = False
+    removed["qc_reasons"] = removed["qc_reasons"].apply(lambda r: (r or []) + [reason])
+    by_split = {n: int(dfs[n]["id"].isin(found).sum()) for n in ("train", "test")}
+    by_split["sealed"] = int(sealed["id"].isin(found).sum())
+    for n in ("kept", "train", "test"):
+        save_jsonl(dfs[n][~dfs[n]["id"].isin(found)], str(out / f"{n}.jsonl"))
+    save_jsonl(pd.concat([dfs["rejected"], removed], ignore_index=True), str(out / "rejected.jsonl"))
+    if by_split["sealed"]:
+        save_jsonl(sealed[~sealed["id"].isin(found)], str(sealed_path))
+    man_path = out / "run_manifest.json"
+    manifest = json.loads(man_path.read_text(encoding="utf-8"))
+    entry = {"date": time.strftime("%Y-%m-%d"), "reason": reason, "ids": sorted(found),
+             "n_removed": len(found), "removed_by_split": by_split, "not_found": missing}
+    manifest.setdefault("removals", []).append(entry)
+    manifest["totals"] = {"kept": int(len(dfs["kept"]) - len(found)),
+                          "rejected": int(len(dfs["rejected"]) + len(removed)),
+                          "train": int(len(dfs["train"]) - by_split["train"]),
+                          "test": int(len(dfs["test"]) - by_split["test"])}
+    man_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    if verbose:
+        print(f"Removed {len(found)} rows ({by_split}); reason '{reason}'. Totals: {manifest['totals']}"
+              + (f". Not found: {missing}" if missing else ""))
+    return entry
+
+
 def recheck_protected(cfg: Cfg, verbose: bool = True) -> Dict[str, Any]:
     """Data 5.2: remove rows too similar to the hand-written / policy test cases.
 
@@ -2538,6 +2609,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="paraphrases (personas) per scenario template")
     p.add_argument("--topup-5-2", action="store_true",
                    help="data 5.2: replace AN-DEAD private_property rows and add emergencies in --out")
+    p.add_argument("--drop-ids", default=None,
+                   help="QC 5.3: comma-separated record ids to remove from the run in --out")
+    p.add_argument("--drop-reason", default="removed_in_review",
+                   help="reason recorded for --drop-ids")
     p.add_argument("--recheck-protected", action="store_true",
                    help="data 5.2: remove rows matching --protected-dir test cases (no model calls)")
     p.add_argument("--topup-triggers", action="store_true",
@@ -2552,6 +2627,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     cfg = _build_cfg_from_args(args)
 
+    if args.drop_ids:                                           # QC 5.3: no key, no model calls
+        drop_rows(cfg, args.drop_ids.split(","), args.drop_reason, verbose=True)
+        return 0
     if args.recheck_protected:                                  # data 5.2: no key, no model calls
         recheck_protected(cfg, verbose=True)
         return 0
