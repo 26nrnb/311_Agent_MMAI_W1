@@ -109,4 +109,6 @@ def judge(case: Case, conv: Conversation, outcome: str, sel, rubric: str, chat, 
     answer = cache.get_or_call(key_for("judge", sel.label, messages), call)
     verdict = parse(answer["content"])
     verdict["cost_usd"] = answer.get("cost_usd") or 0.0
+    verdict["tokens_in"] = answer.get("tokens_in") or 0     # results_format.md: totals include the judge
+    verdict["tokens_out"] = answer.get("tokens_out") or 0
     return verdict

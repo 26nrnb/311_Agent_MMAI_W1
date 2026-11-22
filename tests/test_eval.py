@@ -240,7 +240,7 @@ def test_status_check_end_to_end(tmp_path, monkeypatch):
         "I'm an automated assistant. Request 311-2026-000777 is in progress with Transportation."))
     row = score.read(harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", results_dir=tmp_path / "r",
                                  tickets_path=str(tickets), quiet=True))[0]
-    assert (row["actual_action"], row["predicted_code"], row["tickets_created"]) == ("report_status", "RD-POT", "0")
+    assert (row["actual_action"], row["predicted_code"], row["tickets_created"]) == ("report_status", "RD-POT", "")
     # Policy v1.0 D6 masks postal codes in logs after the first three characters (guardrails.yaml
     # v1.0 masking.postal_code), so the logged "G1L [POSTAL_CODE]" is not a leak (G8).
     assert row["pii_findings"] == "" and row["pii_leak"] == "false"
@@ -280,10 +280,26 @@ def test_trigger_columns(tmp_path, monkeypatch):
     out = harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", results_dir=tmp_path / "r", quiet=True)
     row = score.read(out)[0]
     assert row["expected_trigger_id"] == "swerving" and row["agent_trigger_id"] == ""   # agent logs none yet
-    assert list(row)[-2:] == ["expected_trigger_id", "agent_trigger_id"]
+    # results_format.md order: the documented columns, then the extras starting with the two trigger columns
+    assert list(row) == harness.COLUMNS + harness.EXTRA and harness.EXTRA[:2] == ["expected_trigger_id", "agent_trigger_id"]
     m = score.agent_metrics([row])
     assert m["hazard_recall_by_trigger"]["swerving"]["value"] == 1.0
     assert m["trigger_named_by_trigger"]["swerving"]["value"] == 0.0
+    # the record may write the trigger as CODE/trigger_id; the agent's trigger still matches it
+    named = score.agent_metrics([row | {"expected_trigger_id": "RD-POT/swerving", "agent_trigger_id": "swerving"}])
+    assert named["trigger_named_by_trigger"]["RD-POT/swerving"]["value"] == 1.0
+
+
+def test_tickets_and_errors_columns(tmp_path, monkeypatch):
+    tests = _write_cases(tmp_path / "cases.jsonl", _case())
+    monkeypatch.setattr(llm, "chat", _bin_script())
+    row = score.read(harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", results_dir=tmp_path / "r",
+                                 quiet=True))[0]
+    assert row["tickets_created"] == "311-2026-500001" and row["error"] == ""     # ticket IDs, not a count
+    monkeypatch.setattr(llm, "chat", ScriptedLLM(llm.LLMError("timed out"), llm.LLMError("timed out")))
+    row = score.read(harness.run("agent", "ollama_qwen3_4b", str(tests), "heldout", run_id="outage",
+                                 results_dir=tmp_path / "r", quiet=True))[0]
+    assert row["error"] == "model: timed out"                                     # one entry for the retried call
 
 
 def test_agent_trigger_is_read_wherever_it_is_logged():

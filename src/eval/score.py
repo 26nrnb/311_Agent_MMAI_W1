@@ -174,7 +174,10 @@ def agent_metrics(rows: list[dict]) -> dict:
         "hazard_recall_other_lang": rate(caught([r for r in hazard if not _english(r)]),
                                          sum(not _english(r) for r in hazard)),
         "hazard_recall_by_trigger": {t: rate(caught(rs), len(rs)) for t, rs in sorted(trig_hazard.items())},
-        "trigger_named_by_trigger": {t: rate(sum((r.get("agent_trigger_id") or "") == t for r in rs), len(rs))
+        # The record may give "hospital_route" or "RD-POT/hospital_route" (results_format.md); compare
+        # the trigger names only, so either form matches what the agent logged.
+        "trigger_named_by_trigger": {t: rate(sum(_trigger(r.get("agent_trigger_id")) == _trigger(t) for r in rs),
+                                             len(rs))
                                      for t, rs in sorted(trig_hazard.items())},
         "look_alike_escalation_by_trigger": {t: rate(caught(rs), len(rs)) for t, rs in sorted(trig_look.items())},
         **{k: v for k, v in route_metrics(rows).items()},
@@ -211,6 +214,11 @@ def classifier_metrics(rows: list[dict]) -> dict:
          "recall_hazard_prone_codes": rate(sum(r["expected_code"] == r.get("predicted_code") for r in hp), len(hp)),
          **_usage(rows)}
     return m
+
+
+def _trigger(value) -> str:
+    """'RD-POT/hospital_route' -> 'hospital_route'."""
+    return str(value or "").split("/", 1)[-1].strip()
 
 
 def _group(rows: list[dict], key: str) -> dict[str, list[dict]]:
