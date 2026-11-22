@@ -176,8 +176,8 @@ def test_classifier_run_scores_route_accuracy(tmp_path):
 
 def test_ticket_fixtures_load_from_json(tmp_path):
     rows, source = harness.load_tickets(str(harness.ROOT / "data" / "demo" / "demo_tickets.json"))
-    assert source == "demo_tickets.json" and rows[0]["ticket_id"] == "311-2026-900001"
-    assert rows[0]["opened_at"].endswith("+00:00") and rows[0]["location_norm"] == "45 elm street"
+    assert source == "demo_tickets.json" and rows[0]["ticket_id"] == "311-2026-100140"
+    assert rows[0]["opened_at"].endswith("+00:00") and rows[0]["location_norm"] == "92 reed lane"
 
 
 # ---------------------------------------------------------------- scoring
@@ -210,8 +210,33 @@ def test_success_needs_every_condition():
 
 def test_demo_cases_are_valid_records():
     cases = testset.load(harness.ROOT / "data" / "demo" / "demo_cases.jsonl")
-    assert [c.case_id for c in cases] == [f"demo_{i}" for i in range(1, 6)]
+    assert [c.case_id for c in cases] == [f"demo_{i}" for i in range(1, 7)]
     assert any(c.turns for c in cases)    # the ambiguous dumping case answers the clarifying question
+
+
+def test_demo_tickets_work_with_the_ticket_tools(fresh_store, monkeypatch):
+    """Cases 4 and 6 need two v3 store tickets (docs/demo_cases.md); no other case may match a ticket
+    by accident, and every gold value must pass create_ticket's closed-value check. Checked on the
+    demo's two-ticket copy and, when it is present, on the full store in data/tickets.db."""
+    from src.eval import demo
+    from src.tools import store as store_mod, tickets as tk
+    from src.tools.policy import policy_lookup
+    monkeypatch.setattr(store_mod, "_now", lambda: harness.FROZEN_NOW)   # duplicate windows use the store clock
+    cases = testset.load(demo.DEMO_CASES)
+    for path in {demo.DEMO_TICKETS, demo.ticket_source()}:
+        fresh_store.tickets, _ = harness.load_tickets(str(path))
+        for c in cases:
+            pol = policy_lookup(c.expected_code)
+            if c.expected_action == "report_status":
+                got = tk.get_status(c.ticket_ref, tk._postal_code(c.message))
+                assert got["ok"] and got["status"] == "in_progress", c.case_id
+                assert not tk.get_status(c.ticket_ref, "G1A 1A1")["ok"]    # D5: wrong postal code
+                continue
+            days = pol["duplicate_window"].get("days")
+            found = tk.search_tickets(c.gold_fields["location"], c.expected_code, days)["tickets"]
+            expected = [c.ticket_ref] if c.expected_action == "link_duplicate" else []
+            assert [t["ticket_id"] for t in found] == expected, (c.case_id, path.name)
+            assert not tk._check_values(pol, dict(c.gold_fields)), c.case_id
 
 
 # ---------------------------------------------------------------- policy v1.0 changes (F's review, Nov 20)

@@ -1,66 +1,28 @@
 [
   {
-    "ticket_id": "311-2026-900001",
+    "ticket_id": "311-2026-100140",
     "code": "RD-POT",
     "unit": "Transportation",
     "status": "open",
-    "location": "45 Elm Street",
-    "postal_code": "G1L 2B4",
+    "location": "92 Reed Lane",
+    "postal_code": "G4P 6J5",
     "fields": {
-      "lane_or_sidewalk": "lane",
-      "approximate_size": "dinner plate"
+      "approximate_size": "about 30 cm across",
+      "lane_or_sidewalk": "curb lane"
     },
-    "opened_at": "2026-11-09T12:00:00+00:00"
+    "opened_at": "2026-11-04T15:00"
   },
   {
-    "ticket_id": "311-2026-900002",
+    "ticket_id": "311-2026-100314",
     "code": "SW-BIN",
     "unit": "Solid Waste",
     "status": "in_progress",
-    "location": "12 Harbour Road",
-    "postal_code": "G1M 3C5",
+    "location": "788 Greene Court",
+    "postal_code": "G7M 7H7",
     "fields": {
       "bin_type": "recycling",
-      "damage_type": "cracked lid"
+      "damage_type": "broken hinge"
     },
-    "opened_at": "2026-11-06T12:00:00+00:00"
-  },
-  {
-    "ticket_id": "311-2026-900003",
-    "code": "IL-DUMP",
-    "unit": "Solid Waste",
-    "status": "open",
-    "location": "Maple Avenue and King Street",
-    "postal_code": "G1N 4D6",
-    "fields": {
-      "material_type": "mattress and furniture"
-    },
-    "opened_at": "2026-11-10T12:00:00+00:00"
-  },
-  {
-    "ticket_id": "311-2026-900004",
-    "code": "TR-TREE",
-    "unit": "Urban Forestry",
-    "status": "open",
-    "location": "300 Birch Crescent",
-    "postal_code": "G1P 5E7",
-    "fields": {
-      "city_or_private_tree": "city",
-      "what_is_wrong": "dead branches"
-    },
-    "opened_at": "2026-11-02T12:00:00+00:00"
-  },
-  {
-    "ticket_id": "311-2026-900005",
-    "code": "SW-MISS",
-    "unit": "Solid Waste",
-    "status": "closed",
-    "location": "88 Willow Way",
-    "postal_code": "G1R 6F8",
-    "fields": {
-      "stream_missed": "organics",
-      "scheduled_day": "Tuesday"
-    },
-    "opened_at": "2026-10-22T12:00:00+00:00"
+    "opened_at": "2026-10-31T13:00"
   }
 ]
