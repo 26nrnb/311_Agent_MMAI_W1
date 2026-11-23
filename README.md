@@ -9,7 +9,7 @@ only in Supabase and is edited at `/admin`.
 
 **All data is synthetic.** No real residents, addresses or City systems.
 
-- Chat site: plain chat page, choose the model in the top-right corner.
+- Chat site: plain chat page, choose the model and the classifier in the top-right corner.
 - Admin page at `/admin`: walk through any conversation decision by
   decision through the interaction tree, and edit the tree, config, prompts
   and the knowledge base in the browser (live, with history). No login yet.
@@ -19,10 +19,17 @@ only in Supabase and is edited at `/admin`.
 - Public access: Cloudflare Tunnel to the local server
   ([docs/deployment.md](docs/deployment.md)).
 
+## Architecture
+
+[![Architecture: a resident's message through the container to a ticket, the /admin page, and code deploys](docs/images/architecture_diagram.png)](docs/images/architecture_diagram.png)
+
+The interactive version is [docs/architecture_diagram.html](docs/architecture_diagram.html);
+the turn-by-turn description is in [docs/architecture.md](docs/architecture.md).
+
 ## Quick start
 
 Requires Python 3.11+ and, for local models, [Ollama](https://ollama.com)
-with at least one tool-capable model (for example `ollama pull qwen3:8b`).
+with at least one tool-capable model (the default is `ollama pull qwen3:4b-instruct`).
 
 ```bash
 python -m venv .venv
@@ -31,6 +38,10 @@ pip install -r requirements.txt
 cp .env.example .env          # then fill in the Supabase values
 python run.py serve           # http://127.0.0.1:8311
 ```
+
+The fine-tuned classifiers also need `pip install -r requirements-ml.txt` and
+their weights copied into `src/models/fine_tuning/` (gitignored; see
+[docs/deployment.md](docs/deployment.md)). Without them the keyword stub is used.
 
 No Supabase yet? Set `USE_MEMORY_STORE=1` in `.env` to run with an in-memory
 store (nothing persists across restarts).
@@ -91,9 +102,9 @@ returned them (policy rule C5).
   and the branch it took, with the tree beside it and the path highlighted.
   Model and tool calls show their arguments and results; tickets and
   handoffs come from the database. Tick *Follow newest* and chat on the
-  main site to watch a conversation live. *Re-run with another model*
-  replays the conversation's messages on a model you pick (Ollama or
-  OpenRouter); tickets and handoffs in a re-run are simulated, never filed.
+  main site to watch a conversation live. *Re-run with another model or classifier*
+  replays the conversation's messages on a model (Ollama or OpenRouter)
+  and/or classifier you pick; tickets and handoffs in a re-run are simulated, never filed.
 - **Tickets / Handoffs:** every ticket and handoff, live. Filter by status,
   code or rule, or search; open one to see what was collected, why it was
   handed off, the transcript, and the conversation behind it. Change its
@@ -114,8 +125,10 @@ returned them (policy rule C5).
   into tickets filed, handoffs and the rest; reply time against the 10 s
   target (G10); reply and inference time per model, to compare Ollama with
   a commercial model; tokens and spend per model; why requests were handed off;
-  re-runs side by side with their originals (speed, tokens, cost, and the
-  tools, rules and outcome of every turn); and the running cost (model +
+  classifiers per setup (unsure rate, confidence bands, time, and agreement
+  with the code the conversation settled on); re-runs side by side with their
+  originals (speed, tokens, cost, each turn's classifier code and confidence,
+  and the tools, rules and outcome of every turn); and the running cost (model +
   hosting + staff time on handoffs) against
   doing the same requests by hand. The cost assumptions (staff rate, handle
   time, hosting) are edited on the same tab and saved to `app.yaml`.
@@ -132,8 +145,14 @@ the site never reads.
   Supabase config, never in code.
 - Record every prompt change in [docs/prompt_changelog.md](docs/prompt_changelog.md),
   including ones made in `/admin` (add a note when you save; the history keeps it too).
-- The classifier is a keyword stub behind `classify(text) -> {code, confidence, top2}`
-  in `src/models/classifier.py`; swap in the real model without changing the signature.
+- The route classifier runs in code on each resident message, before the model,
+  until the request's code is settled; its code and confidence go to the model
+  with the message (it is not a model tool). Every classifier is called the same
+  way, `classify(text) -> {code, confidence, top2}` (`src/models/classifier.py`),
+  and is named by a setup in `src/eval/setups.yaml`: `keyword_stub`,
+  `distilroberta_lora` or `modernbert_lora`. The chat page picks one per
+  conversation, re-runs pick one per run, and `agent.classifier` in `app.yaml`
+  sets the default. Each run is logged as a `classifier` event.
 - Every model call is logged to `interaction_events` with `provider:model`,
   tokens, latency and cost, so runs can be compared by model.
 
@@ -142,7 +161,7 @@ the site never reads.
 ```
 src/agent/         orchestrator loop, interaction tree engine (flow.py), conversation state
 src/tools/         policy_lookup, search_tickets, create_ticket, get_status, handoff, kb_search
-src/models/        LLM backbone (Ollama/OpenRouter), classify()
+src/models/        LLM backbone (Ollama/OpenRouter), route classifiers (keyword stub, fine-tuned)
 src/guardrails/    input screen, masking/redaction, output check
 src/rag/           knowledge-base sync (chunking) and embeddings
 src/web/           FastAPI server, static chat page, /admin page and API
@@ -209,8 +228,9 @@ The agent never hard-codes a category, so a new one is mostly configuration:
    Bump `version` and add a `change_log` line. The tools, the code list the model may choose from, and the catalogue in the system prompt all read this file, so nothing else in `src/` changes.
 2. **Escalation and wording:** if a trigger must be enforced in code rather than only by the model, add a node in `/admin > Flow`, or a pattern in `guardrails.yaml` for an emergency. Add any new approved wording under `wording`.
 3. **Classifier:**
-   - Today (stub): add the code's keywords to `_KEYWORDS` in `src/models/classifier.py`.
-   - For the real classifiers: add the label to the prompts, and retrain the fine-tuned model on data that includes it.
+   - Keyword stub: add the code's keywords to `_KEYWORDS` and the code to `ROUTE_LABELS` in `src/models/classifier.py`.
+   - Fine-tuned classifiers: retrain on data that includes the new label and copy the new weights to the server (`src/models/fine_tuning/`).
+   - Prompted classifiers: add the label to the prompts in `prompts/classifier/`.
 4. **Data:** add the code to `SERVICE_CODES` (and `CONFUSABLE`) in `src/data_gen/synth_311_pipeline.py`, regenerate, and write some cases by hand.
 5. **Tests:**
    - Add the code to `tests/fixtures/config/policy.yaml`.
@@ -222,7 +242,7 @@ The agent never hard-codes a category, so a new one is mostly configuration:
 
 - [docs/interfaces.md](docs/interfaces.md): the shared contracts. Changing one needs the affected owner's review.
 - [docs/architecture.md](docs/architecture.md): how a turn flows through the system.
-- [docs/architecture_diagram.html](docs/architecture_diagram.html): the whole site as a swim-lane diagram (open in a browser).
+- [docs/architecture_diagram.html](docs/architecture_diagram.html): the whole site as a swim-lane diagram (open in a browser; image in [docs/images/architecture_diagram.png](docs/images/architecture_diagram.png)).
 - [docs/decisions.md](docs/decisions.md): what we chose and why.
 - [docs/metrics.md](docs/metrics.md) and [docs/results_format.md](docs/results_format.md): what we measure, the go thresholds, and the results file columns.
 - [docs/evaluation.md](docs/evaluation.md): the eval harness, `make reproduce`, and how a case is scored.

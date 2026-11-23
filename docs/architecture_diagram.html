@@ -129,7 +129,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
 
 <div class="page">
   <h1>Gilead 311: from a resident's message to a ticket</h1>
-  <p class="sub">311 Intake Agent · how a message is screened, run through the interaction tree and a model, answered and logged in Supabase, and how the team watches and changes the agent from <code>/admin</code>. Live at 311.scurrycat.ca · 8 service codes · 52 policy rules, 19 of them hard.</p>
+  <p class="sub">311 Intake Agent · how a message is screened, run through the interaction tree and a model, answered and logged in Supabase, and how the team watches and changes the agent from <code>/admin</code>. Live at 311.scurrycat.ca · 8 service codes · 60 policy rules, 30 of them hard.</p>
 
   <div class="legend" aria-label="Legend">
     <span><svg width="40" height="10" aria-hidden="true"><line x1="0" y1="5" x2="32" y2="5" style="stroke:var(--wire)" stroke-width="1.6"/><path d="M31,1 L39,5 L31,9 z" style="fill:var(--wire)"/></svg>Data flow</span>
@@ -141,7 +141,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
 
   <div class="scroller" id="scroller">
     <div class="fit" id="fit">
-      <div class="diagram" id="dia" role="img" aria-label="Architecture of the Gilead 311 site in four lanes: a resident's message reaches the container through Cloudflare, runs through eight steps of screening, interaction trees, model calls and tools, is answered and logged in Supabase; the team watches and edits the agent in /admin, and code changes are deployed by rebuilding the container.">
+      <div class="diagram" id="dia" role="img" aria-label="Architecture of the Gilead 311 site in four lanes: a resident's message reaches the container through Cloudflare, runs through eight steps of screening, classification, interaction trees, model calls and tools, is answered and logged in Supabase; the team watches and edits the agent in /admin, and code changes are deployed by rebuilding the container.">
         <svg id="wires" aria-hidden="true">
           <defs>
             <marker id="ah" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--wire)"/></marker>
@@ -164,7 +164,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
             </div>
             <div class="card" id="n-chat">
               <h3>Chat page <code>index.html</code></h3>
-              <p>Picks the model: Ollama by default, or OpenRouter. An OpenRouter key stays in the page's memory for the session and goes with each message; the server never stores or logs it.</p>
+              <p>Picks the model (Ollama by default, or OpenRouter) and the classifier. An OpenRouter key stays in the page's memory for the session and goes with each message; the server never stores or logs it.</p>
             </div>
             <div class="card" id="n-cloudflare">
               <h3>Cloudflare</h3>
@@ -186,7 +186,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
           <div class="lane-head">
             <div class="eyebrow">Lane 2 · Docker container</div>
             <h2>One chat turn</h2>
-            <p>The FastAPI app in the <code>gilead-311</code> container. Steps 2, 4, 6 and 7 run the interaction tree in <code>flow.yaml</code>.</p>
+            <p>The FastAPI app in the <code>gilead-311</code> container. Steps 2, 4, 6 and 7 run the interaction tree in <code>flow.yaml</code>; a failed model call or no answer in 8 round trips runs its own tree and hands off (E9, M4).</p>
             <p><strong>Every step</strong> and every tree node is logged, masked, so <code>/admin</code> can replay the turn.</p>
           </div>
           <div class="lane-body">
@@ -197,13 +197,13 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
             </div>
             <div class="card" id="s2" style="grid-column:2;grid-row:1">
               <span class="num">2</span>
-              <h3>Message tree</h3>
-              <p>Emergencies get the 911 reply (E1); crisis or abuse goes to a person (E8, E7); a suspected injection adds a warning for the model (S1).</p>
+              <h3>Message tree, then classify</h3>
+              <p>Emergencies get the 911 reply (E1); crisis or abuse goes to a person (E8, E7); a suspected injection adds a warning for the model (S1). Then the chosen classifier (keyword stub or fine-tuned) picks the service code in code; unsure gets one clarifying question (E3, F2). The code goes to the model with the message.</p>
             </div>
             <div class="card" id="s3" style="grid-column:3;grid-row:1">
               <span class="num">3</span>
               <h3>Call the model</h3>
-              <p>System prompt, the conversation and 7 tool schemas go to the chosen model. At most 8 round trips per message; a failed call is retried once (F1).</p>
+              <p>System prompt, the conversation and 6 tool schemas go to the chosen model. At most 8 round trips per message; a failed call is retried once (F1).</p>
             </div>
             <div class="card" id="s4" style="grid-column:4;grid-row:1">
               <span class="num">4</span>
@@ -218,7 +218,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
             <div class="card" id="s5" style="grid-column:4;grid-row:2">
               <span class="num">5</span>
               <h3>Run the tool</h3>
-              <p><code>classifier</code>, <code>policy_lookup</code>, <code>search_tickets</code>, <code>create_ticket</code>, <code>get_status</code>, <code>handoff</code>, <code>kb_search</code>. One retry; still failing goes to a person (E9).</p>
+              <p><code>policy_lookup</code>, <code>search_tickets</code>, <code>create_ticket</code>, <code>get_status</code>, <code>handoff</code>, <code>kb_search</code>. One retry; still failing goes to a person (E9).</p>
             </div>
             <div class="card" id="s6" style="grid-column:3;grid-row:2">
               <span class="num">6</span>
@@ -259,7 +259,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
               </div>
               <div class="cyl" id="cyl-config">
                 <h4>config_files</h4>
-                <span class="pill">5 files, every version</span>
+                <span class="pill">every file, every version</span>
                 <div class="tables">app policy guardrails flow prompts · config_revisions</div>
               </div>
             </div>
@@ -279,7 +279,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
               <div class="card">
                 <span class="num">A</span>
                 <h3>Interactions</h3>
-                <p>Replay any conversation step by step, with the tree beside it and the path taken highlighted. Re-run it on another model; tickets and handoffs in a re-run are simulated.</p>
+                <p>Replay any conversation step by step, with the tree beside it and the path taken highlighted. Re-run it on another model or classifier; tickets and handoffs in a re-run are simulated.</p>
               </div>
               <div class="card">
                 <span class="num">B</span>
@@ -289,14 +289,14 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
               <div class="card">
                 <span class="num">C</span>
                 <h3>Analytics</h3>
-                <p>Requests per hour, day or month; reply time per model; re-runs side by side (speed, tokens, decisions); running cost against doing it by hand.</p>
+                <p>Requests per hour, day or month; reply time per model; classifiers (unsure rate, confidence, time); re-runs side by side (speed, tokens, decisions); running cost against doing it by hand.</p>
               </div>
             </div>
             <div class="card team" id="n-review" style="grid-column:2">
               <span class="num">D</span><span class="badge team">TEAM</span>
               <h3>Review and decide</h3>
               <p>The team spots a wrong turn, a missed rule, a slow model or a gap in the knowledge base, and decides what to change.</p>
-              <p style="margin-top:8px">Most fixes are edits on this page. A new kind of check, tool or tab needs code (lane 4).</p>
+              <p style="margin-top:8px">Most fixes are edits on this page. A new kind of check, tool, tab or a retrained classifier needs code or a deploy (lane 4).</p>
             </div>
             <div class="stack" id="n-change" style="grid-column:3">
               <div class="card">
@@ -335,13 +335,13 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
           <div class="lane-head">
             <div class="eyebrow">Lane 4 · Code and deploy</div>
             <h2>Code changes</h2>
-            <p>Only new code needs a deploy. The container keeps no files of its own.</p>
+            <p>Only new code needs a deploy. The container keeps no data of its own.</p>
           </div>
           <div class="lane-body">
             <div class="card team" id="n-code">
               <span class="badge team">TEAM</span>
               <h3>Change the code</h3>
-              <p>In the repo. <code>pytest</code> runs 70 tests on an in-memory store with the fixture config in <code>tests/fixtures/config/</code>; tests never touch Supabase.</p>
+              <p>In the repo. <code>pytest</code> runs 228 tests on an in-memory store with the fixture config in <code>tests/fixtures/config/</code>; tests never touch Supabase.</p>
             </div>
             <div class="card" id="n-push">
               <h3>Push to <code>main</code></h3>
@@ -350,7 +350,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
             <div class="card team" id="n-rebuild">
               <span class="badge team">TEAM</span>
               <h3>Rebuild on the server</h3>
-              <p>On 192.168.1.149: <code>git pull</code>, then <code>docker compose up -d --build</code>. The container restarts on its own after a reboot.</p>
+              <p>On 192.168.1.149: <code>git pull</code>, then <code>docker compose up -d --build</code>. Fine-tuned classifier weights are copied to <code>src/models/fine_tuning</code> by hand and mounted read-only. The container restarts on its own after a reboot.</p>
             </div>
             <div class="card" id="n-live">
               <span class="badge auto">AUTO</span>
@@ -364,7 +364,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
   </div>
 
   <footer>
-    <span>Sources: TerraIncognito-sudo/311_Agent_MMAI on GitHub (src/web/server.py, src/agent/orchestrator.py, src/agent/flow.py, src/web/admin.py, src/web/analytics.py, docker-compose.yml, docs/deployment.md).</span>
+    <span>Sources: TerraIncognito-sudo/311_Agent_MMAI on GitHub (src/web/server.py, src/agent/orchestrator.py, src/agent/flow.py, src/models/classifier.py, src/web/admin.py, src/web/analytics.py, docker-compose.yml, docs/deployment.md).</span>
     <span>Synthetic data only. Gilead is a placeholder city.</span>
   </footer>
 </div>
@@ -415,7 +415,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
       { pts: right(res, chat, res.cy) },
       { pts: right(chat, cf, chat.cy) },
       { pts: [[cf.x(0.3), cf.b], [cf.x(0.3), g12], [s[1].cx, g12], [s[1].cx, s[1].t]], label: "POST /api/chat through the tunnel", seg: 1 },
-      { pts: [[s[3].x(0.72), s[3].t], [s[3].x(0.72), g12], [ol.cx, g12], [ol.cx, ol.b]], label: "prompt + 7 tool schemas", seg: 1, f: 0.42 },
+      { pts: [[s[3].x(0.72), s[3].t], [s[3].x(0.72), g12], [ol.cx, g12], [ol.cx, ol.b]], label: "prompt + 6 tool schemas", seg: 1, f: 0.42 },
       { pts: [[s[3].x(0.72), s[3].t], [s[3].x(0.72), g12], [or.cx, g12], [or.cx, or.b]] },
       { pts: [[s[8].l, s[8].cy], [s[8].l - 12, s[8].cy], [s[8].l - 12, g12], [res.x(0.22), g12], [res.x(0.22), res.b]], label: "reply", seg: 2, f: 0.55 },
       // lane 2: the turn
