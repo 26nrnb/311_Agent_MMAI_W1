@@ -20,6 +20,7 @@ policy.yaml (src/agent/outcome.py); the last one is the final outcome.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -133,21 +134,54 @@ def _do_handoff(session: Session, rule_id: str, reason: str) -> str:
     return _wording("handoff", ref_id=result["ref_id"])
 
 
-def _finish(session: Session, reply: str, rule_id: str | None = None) -> dict:
-    session.transcript.append({"role": "assistant", "text": reply})
-    session.messages.append({"role": "assistant", "content": reply})
-    note_reply(session.state, reply)
-    log_event(session, "reply", rule_id=rule_id, text=reply,   # what the resident saw
-              outcome=outcome(session.state, reply))
-    return {"interaction_id": session.interaction_id, "reply": reply, "rule_id": rule_id}
+_SAYS_AUTOMATED = re.compile(r"\bautomated\b", re.IGNORECASE)
 
 
-def _end(session: Session, out: flow.Outcome) -> dict:
+def _with_intro(session: Session, reply: str, rule_id: str | None) -> str:
+    """M1: the first reply of a conversation says it's an automated assistant, in the approved
+    wording, unless it already does. A 911 reply (E1) keeps the emergency text first."""
+    intro = policy()["wording"].get("automated_intro")
+    if (not intro or any(t["role"] == "assistant" for t in session.transcript)
+            or _SAYS_AUTOMATED.search(reply)):
+        return reply
+    intro = intro.format(city=policy()["city"])
+    return f"{reply} {intro}" if rule_id == "E1" else f"{intro} {reply}"
+
+
+def _check_aside(session: Session, text: str) -> str | None:
+    """Text the model wrote alongside a tool call goes through the same reply checks as a reply.
+    Kept (cleaned) if they pass; dropped, without ending the turn, if they would block or replace it."""
+    rctx = flow.Ctx(state=session.state, reply=text)
+    out = _run_flow(session, "reply", rctx)
+    if out.kind in ("reply", "handoff", "block"):
+        return None
+    return (rctx.reply or "").strip() or None
+
+
+def _finish(session: Session, reply: str, rule_id: str | None = None, asides: list[str] = ()) -> dict:
+    """asides: text the model wrote alongside this turn's tool calls, already checked; shown
+    before the reply (it is already in the model's history, so only the reply is added there)."""
+    parts = []
+    for p in [*asides, reply]:
+        if p and p not in parts:
+            parts.append(p)
+    shown = _with_intro(session, "\n\n".join(parts), rule_id)
+    model_text = shown if not asides else _with_intro(session, reply, rule_id)
+    session.transcript.append({"role": "assistant", "text": shown})
+    session.messages.append({"role": "assistant", "content": model_text})
+    note_reply(session.state, shown)
+    log_event(session, "reply", rule_id=rule_id, text=shown,   # what the resident saw
+              outcome=outcome(session.state, shown))
+    return {"interaction_id": session.interaction_id, "reply": shown, "rule_id": rule_id}
+
+
+def _end(session: Session, out: flow.Outcome, asides: list[str] = ()) -> dict:
     """Finish the turn the way a tree's reply or handoff action decided."""
     if out.kind == "reply":
-        return _finish(session, out.text, out.rule)
+        return _finish(session, out.text, out.rule, asides)
     prefix = _wording(out.prefix) + " " if out.prefix else ""
-    return _finish(session, prefix + _do_handoff(session, out.handoff_rule or out.rule, out.reason), out.rule)
+    return _finish(session, prefix + _do_handoff(session, out.handoff_rule or out.rule, out.reason),
+                   out.rule, asides)
 
 
 def _chat_with_retry(session: Session, sel: LLMSelection):
@@ -304,20 +338,24 @@ def handle_turn(interaction_id: str | None, user_text: str, sel: LLMSelection,
         content += "\n\n[" + " ".join(notes) + "]"
     session.messages.append({"role": "user", "content": content})
 
+    asides: list[str] = []   # what the model said alongside its tool calls; the resident sees it too
     for _ in range(app_config()["llm"]["max_tool_steps"]):
         resp = _chat_with_retry(session, sel)
         if resp is None:                                      # F1 -> E9
-            return _end(session, _run_flow(session, "model_failure", flow.Ctx(state=session.state)))
+            return _end(session, _run_flow(session, "model_failure", flow.Ctx(state=session.state)), asides)
         msg = resp.message
         calls = msg.get("tool_calls") or []
         if not calls:
             rctx = flow.Ctx(state=session.state, reply=(msg.get("content") or "").strip())
             out = _run_flow(session, "reply", rctx)
             if out.kind in ("reply", "handoff"):
-                return _end(session, out)
-            return _finish(session, rctx.reply)
+                return _end(session, out, asides)
+            return _finish(session, rctx.reply, asides=asides)
 
         session.messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
+        aside = (msg.get("content") or "").strip()
+        if aside and (aside := _check_aside(session, aside)):
+            asides.append(aside)
         ending = None
         for call in calls:
             name = call["function"]["name"]
@@ -333,6 +371,6 @@ def handle_turn(interaction_id: str | None, user_text: str, sel: LLMSelection,
             session.messages.append({"role": "tool", "tool_call_id": call.get("id", name), "name": name,
                                      "content": json.dumps(result)})
         if ending and ending.kind in ("reply", "handoff"):
-            return _end(session, ending)
+            return _end(session, ending, asides)
 
-    return _end(session, _run_flow(session, "step_limit", flow.Ctx(state=session.state)))
+    return _end(session, _run_flow(session, "step_limit", flow.Ctx(state=session.state)), asides)

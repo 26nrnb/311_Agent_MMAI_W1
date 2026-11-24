@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from src.agent import orchestrator
 from src.web.server import app
-from conftest import tool_call
+from conftest import INTRO, tool_call
 
 client = TestClient(app)
 
@@ -388,7 +388,7 @@ def test_rerun_replays_a_conversation_on_another_model_without_touching_records(
     assert [t["name"] for t in run["turns"][0]["tools"]] == ["policy_lookup", "search_tickets", "create_ticket"]
     # both runs call the same tools now that A10 makes the original search first too
     assert run["turns"][0]["same_tools"] is True and run["same_outcome"]
-    assert run["calls"] == 4 and run["tokens_in"] == 40 and run["turns"][0]["reply"] == "Filed."
+    assert run["calls"] == 4 and run["tokens_in"] == 40 and run["turns"][0]["reply"] == INTRO + "Filed."
     assert {m["model"] for m in d["by_model"]} == {"ollama:m", "ollama:other"}
 
     # test traffic stays out of usage and cost

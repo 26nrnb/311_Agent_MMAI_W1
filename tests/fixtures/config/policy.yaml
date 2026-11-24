@@ -47,9 +47,10 @@
 # (public_or_private_land: private property), so create_ticket can refuse it in code (A8).
 # v1.0.2 (Nov 21): D2 enforced_by also names create_ticket, which now refuses D2 data in a field.
 # v1.0.3 (Nov 21): A4 enforced_by also names the closed-value check (field_options) in create_ticket.
+# v1.0.4 (Nov 23): M1 is said in code: wording automated_intro opens every conversation's first reply.
 # ---------------------------------------------------------------------------------------
 
-version: v1.0.3   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0 | (v1.0.1): IL-DUMP private-property value | (v1.0.2): D2 enforced_by | (v1.0.3): A4 enforced_by
+version: v1.0.4   # CHANGED (v0.4): was v0.1 | (v0.5): v0.4 -> v0.5 | (v1.0): frozen as v1.0 | (v1.0.1): IL-DUMP private-property value | (v1.0.2): D2 enforced_by | (v1.0.3): A4 enforced_by | (v1.0.4): M1 automated_intro
 city: Gilead
 
 thresholds:
@@ -341,7 +342,7 @@ rules:
   E8: {text: "Resident distressed or mentions self-harm -> hand off with crisis line information", hard: false, enforced_by: "input_screen self_harm + flow crisis_handoff"}
   E9: {text: "Tool error or timeout after one retry -> human review; never claim a ticket exists", hard: true, enforced_by: "orchestrator retry + flow tool_failed"}
   E10: {text: "Out-of-scope request (general question, other service, private tree or dumping on private property) -> say what the agent can help with; offer a 311 agent", hard: false, enforced_by: "prompt + routes.OOS"}   # CHANGED (v0.4): + private tree | (v0.5): + dumping on private property
-  M1: {text: "Say it is an automated assistant at the start of every conversation", hard: false, enforced_by: "prompt"}
+  M1: {text: "Say it is an automated assistant at the start of every conversation", hard: false, enforced_by: "orchestrator: wording automated_intro opens the first reply"}   # CHANGED (v1.0.4): was prompt
   M2: {text: "Ask at most one question per turn", hard: false, enforced_by: "flow ask_one_field (reminder)"}
   M3: {text: "Confirm a ticket only after create_ticket returns an ID and quote it exactly", hard: true, enforced_by: "output_check invented_ids + flow invented_id"}
   M4: {text: "When unsure, say so and hand off; never guess at City rules", hard: false, enforced_by: "flow step_limit_reached"}
@@ -378,6 +379,7 @@ wording:
   cancel_or_change: "I can't change or cancel a request. I've passed this to a 311 staff member; your reference is {ref_id}."   # NEW (v0.3): A7
   crisis_line: "If you are in crisis or thinking about harming yourself, please call or text 988 (Suicide Crisis Helpline) now."
   tool_failure: "Something went wrong on our side, so I haven't created a request. I've passed what you told me to a 311 staff member."
+  automated_intro: "I'm the City of {city}'s automated 311 assistant."   # NEW (v1.0.4): M1
 
 change_log:
   - {version: v0.1, date: 2026-10-31, change: "First draft: rules A, C, D, E, M, S, F and service catalogue", reason: "Proposal stage"}
@@ -390,6 +392,7 @@ change_log:
   - {version: v1.0.1, date: 2026-11-20, change: "IL-DUMP: optional field public_or_private_land; the private_property not_handled case lists the value 'private property', so create_ticket refuses it in code (A8). No change to what the policy says: dumping on private property was already handoff_oos", reason: "Gap found checking W4's not_handled code: the case had no field value, so only the model could catch it"}
   - {version: v1.0.2, date: 2026-11-21, change: "D2 enforced_by: + tool create_ticket (pii_rejected). No change to what the policy says", reason: "create_ticket now refuses a field holding D2 data instead of redacting it and filing the ticket (D-027)"}
   - {version: v1.0.3, date: 2026-11-21, change: "A4 enforced_by: + closed field values (create_ticket refuses a value not in field_options, invalid_value). No change to what the policy says", reason: "create_ticket now checks closed field values (D-026)"}
+  - {version: v1.0.4, date: 2026-11-23, change: "M1 enforced_by: the orchestrator opens a conversation's first reply with the new wording automated_intro (after the 911 text on an E1 reply; not added if the reply already says it is automated). No change to what the policy says", reason: "Testing found the model skipped M1 in five of six first replies"}
 
 # KEY MAPPING (for W4 and the Interfaces doc). Interface 2 names -> keys in this file:
 #   codes                -> service_catalogue      (read by policy_lookup, admin, orchestrator)
