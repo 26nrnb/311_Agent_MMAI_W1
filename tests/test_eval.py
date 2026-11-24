@@ -13,6 +13,14 @@ BIN_FIELDS = {"location": "12 Oak Street", "bin_type": "recycling", "damage_type
 BIN_MESSAGE = "My recycling bin lid at 12 Oak Street is cracked"
 
 
+@pytest.fixture(autouse=True)
+def _no_shared_store_or_lock(tmp_path, monkeypatch):
+    """Runs here use the pipeline's fixture tickets and no LOCK.md, as on a fresh clone, even
+    where data/tickets.db and data/test/LOCK.md are present."""
+    monkeypatch.setattr(harness, "DEFAULT_TICKETS", tmp_path / "no_tickets.db")
+    monkeypatch.setattr(harness, "LOCK", tmp_path / "no_LOCK.md")
+
+
 def _write_cases(path, *records):
     path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
     return path
@@ -172,6 +180,57 @@ def test_classifier_run_scores_route_accuracy(tmp_path):
     assert [r["predicted_code"] for r in rows] == ["SW-BIN", "RD-POT"] and rows[0]["actual_action"] == ""
     m = score.classifier_metrics(rows)
     assert m["route_accuracy_all"]["value"] == 1.0
+
+
+def _lock_file(path, rows):
+    """A LOCK.md with the NB-03 "Locked files" table."""
+    lines = ["# Test-set lock", "", "| File | Cases | SHA-256 |", "|---|---|---|"]
+    lines += [f"| {name} | {cases} | `{sha}` |" for name, cases, sha in rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_locked_file_must_match_lock_md(tmp_path, monkeypatch):
+    tests = _write_cases(tmp_path / "test_heldout.jsonl", _case(), _case(id="hw_901"))
+    monkeypatch.setattr(harness, "LOCK", _lock_file(tmp_path / "LOCK.md",
+                                                    [("test_heldout.jsonl", 2, testset.file_hash(tests))]))
+    out = harness.run("classify", "keyword_stub", str(tests), "heldout", results_dir=tmp_path / "r", quiet=True)
+    manifest = json.loads((tmp_path / "r" / "manifests" / f"{out.stem}.json").read_text(encoding="utf-8"))
+    assert manifest["test_set_lock"] == "matches LOCK.md (2 cases)"
+    # A copy that only partly downloaded: refused before it is parsed, with the lock's numbers.
+    cut = tmp_path / "copy" / "test_heldout.jsonl"
+    cut.parent.mkdir()
+    cut.write_bytes(tests.read_bytes()[:150])
+    with pytest.raises(harness.RunError, match="does not match data/test/LOCK.md.*locked 2 cases"):
+        harness.run("classify", "keyword_stub", str(cut), "heldout", results_dir=tmp_path / "r2", quiet=True)
+    # A file the lock doesn't list (demo, smoke run) runs, and the manifest says so.
+    other = _write_cases(tmp_path / "smoke.jsonl", _case())
+    out = harness.run("classify", "keyword_stub", str(other), "heldout", results_dir=tmp_path / "r3", quiet=True)
+    manifest = json.loads((tmp_path / "r3" / "manifests" / f"{out.stem}.json").read_text(encoding="utf-8"))
+    assert manifest["test_set_lock"].startswith("not a locked file")
+
+
+def test_default_tickets_are_the_shared_store(tmp_path, monkeypatch):
+    store = tmp_path / "tickets.json"
+    store.write_text((harness.ROOT / "data" / "demo" / "demo_tickets.json").read_text(encoding="utf-8"),
+                     encoding="utf-8")
+    monkeypatch.setattr(harness, "DEFAULT_TICKETS", store)
+    rows, source = harness.load_tickets(None)
+    assert source == "tickets.json" and {r["ticket_id"] for r in rows} == {"311-2026-100140", "311-2026-100314"}
+    rows, source = harness.load_tickets(str(harness.ROOT / "data" / "demo" / "demo_tickets.json"))
+    assert source == "demo_tickets.json"      # --tickets still wins
+
+
+def test_reproduce_skips_csvs_that_are_not_results_files(tmp_path):
+    results = tmp_path / "results"
+    tests = _write_cases(tmp_path / "cases.jsonl", _case())
+    harness.run("classify", "keyword_stub", str(tests), "heldout", results_dir=results, quiet=True)
+    (results / "2026-11-20_nb04_prompted_predictions.csv").write_text("text,label\nhi,SW-BIN\n", encoding="utf-8")
+    (results / "training_log.csv").write_text("﻿epoch,loss\n1,0.5\n", encoding="utf-8")
+    assert [p.name for p in score.other_csvs(results)] == ["2026-11-20_nb04_prompted_predictions.csv",
+                                                            "training_log.csv"]
+    assert len(score.result_files(results)) == 1
+    assert harness.reproduce(results) == 0 and (results / "summary.md").exists()
 
 
 def test_ticket_fixtures_load_from_json(tmp_path):

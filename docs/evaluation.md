@@ -13,11 +13,11 @@ Every setup goes through exactly the same cases, store, clock and config, so res
 | `python run.py eval setups` | List the setup names in `src/eval/setups.yaml` |
 | `python run.py eval classify --setup keyword_stub --test data/test/test_heldout.jsonl --name heldout` | **Harness v1:** the classifier alone, through `classify(text)` |
 | `python run.py eval agent --setup haiku --test data/test/test_heldout.jsonl --name heldout` | **Harness v2:** the whole agent, end to end, through `handle_turn()` |
-| `... agent ... --tickets src/data_gen/data/tickets.db` | Seed every case's store from the pipeline's ticket store (default: the pipeline's fixture tickets) |
+| `... agent ... --tickets FILE` | Seed every case's store from another ticket store. Default: `data/tickets.db`, the shared v3 store (git-ignored; copy it from the team's `data_v3` folder), which the locked status-check and duplicate cases point at. Without it, the pipeline's fixture tickets. |
 | `... agent ... --judge sonnet_judge` | Add the LLM judge's verdicts (needs F's rubric in the config) |
 | `... --limit 20` | First 20 cases only, for a cheap smoke run |
 | `python run.py score` | Score every `results/*.csv` into `results/summary.json` and `results/summary.md` |
-| `make reproduce` (`python run.py reproduce`) | Replay every recorded run from its cache, without API keys, then rescore everything |
+| `make reproduce` (`python run.py reproduce`) | Replay every recorded run from its cache, without API keys, then rescore every harness results file. Other CSVs in `results/` (notebook outputs) are named and skipped. |
 | `python -m src.eval.score fake --out results/fake_run.csv` | Write a valid example results file |
 
 OpenRouter setups read the key from `OPENROUTER_API_KEY` in `.env`. The key is never written to a results file, manifest or cache.
@@ -42,7 +42,7 @@ Re-running the same command resumes from the cache, so no answer is paid for twi
 - **Frozen clock:** the store's clock is the ticket store's as-of date (2026-11-11, `STORE_AS_OF` in the pipeline). Duplicate windows are measured from it, not from the day of the run.
 - **Config snapshot:** the policy, tree, guardrails and prompts in use (Supabase, or the test fixture without Supabase) are saved with the run. A replay uses the snapshot, not today's config.
 - **Record and replay:** every model answer is cached under a key built from the model and the exact messages, including errors and retries. Given the same inputs the agent sends the model the same messages, so `make reproduce` rebuilds each results file without keys. It reports whether the rebuilt file is identical to the committed one.
-- **Test-set hash:** a replay refuses to run if the test file's sha256 differs from the one in the manifest (and in `data/test/LOCK.md`).
+- **Test-set hash:** before a live run, a test file listed in `data/test/LOCK.md` must have the sha256 recorded there, so a changed or partly downloaded copy is refused before it is read. The manifest records the result (`test_set_lock`). A replay refuses to run if the test file's sha256 differs from the one in the manifest.
 
 ## How a case is scored
 

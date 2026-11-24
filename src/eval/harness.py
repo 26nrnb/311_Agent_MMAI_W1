@@ -26,6 +26,11 @@ keys; without them, it rescores the committed results files.
 Each case gets a fresh in-memory store (the same tickets every time), a
 frozen clock (the ticket store's as-of date) and the run's config snapshot,
 so a replay sends the model exactly what the live run did.
+
+Before a live run the test file is checked against data/test/LOCK.md: a file the lock
+lists must have the hash recorded there (a changed or partly downloaded copy is
+refused), and the manifest records the result. The tickets default to the shared
+ticket store, data/tickets.db (git-ignored; data v3), when it is present.
 """
 from __future__ import annotations
 
@@ -46,7 +51,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "results"
-HARNESS_VERSION = "2.0"
+LOCK = ROOT / "data" / "test" / "LOCK.md"            # hashes of the locked test files (F, NB-03)
+DEFAULT_TICKETS = ROOT / "data" / "tickets.db"       # the shared ticket store (data v3), git-ignored
+HARNESS_VERSION = "2.1"
 # The ticket store's clock (src/data_gen/synth_311_pipeline.py STORE_AS_OF) plus half a day,
 # so "opened today" fixtures are inside every duplicate window.
 STORE_AS_OF = datetime(2026, 11, 11, tzinfo=timezone.utc)
@@ -79,9 +86,40 @@ def _git_commit() -> str | None:
         return None
 
 
+def _rel(path: Path) -> str:
+    """A path for the manifest: relative to the repo when it is inside it."""
+    p = Path(path).resolve()
+    return p.relative_to(ROOT).as_posix() if p.is_relative_to(ROOT) else str(p)
+
+
 def run_id_for(setup: str, test_name: str, test_hash: str, day: str | None = None) -> str:
     """date_setup_testset_hash, e.g. 2026-11-20_haiku_heldout_a1b2c3 (Interfaces doc section 6)."""
     return f"{day or date.today().isoformat()}_{setup}_{test_name}_{test_hash[:6]}"
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def lock_status(test_path: str | Path, test_hash: str, lock_path: Path | None = None) -> str:
+    """How a test file stands against data/test/LOCK.md, for the manifest. Raises RunError when
+    the lock's "Locked files" table lists the file with another hash: a changed copy, or one
+    that only partly downloaded. A file the lock doesn't list (a demo or smoke file) runs as is."""
+    lock_path = lock_path or LOCK
+    if not lock_path.exists():
+        return "no LOCK.md"
+    name = Path(test_path).name
+    for line in lock_path.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip().strip("`").strip() for c in line.strip().strip("|").split("|")]
+        # Locked files rows: | file | cases | `sha256` |
+        if len(cells) == 3 and cells[0] == name and cells[1].isdigit() and _SHA256.fullmatch(cells[2]):
+            if test_hash == cells[2]:
+                return f"matches LOCK.md ({cells[1]} cases)"
+            with open(test_path, encoding="utf-8", errors="replace") as fh:
+                n = sum(1 for row in fh if row.strip())
+            raise RunError(f"{name} does not match data/test/LOCK.md: sha256 {test_hash[:12]}..., locked "
+                           f"{cells[2][:12]}...; {n} lines, locked {cells[1]} cases. Get a fresh copy of the "
+                           f"locked file (a partly downloaded copy fails this check).")
+    return "not a locked file (not listed in LOCK.md)"
 
 
 # ------------------------------------------------------------------ tickets
@@ -97,8 +135,12 @@ def _store_row(ticket_id, code, unit, status, location, postal_code, fields, ope
 
 
 def load_tickets(path: str | None) -> tuple[list[dict], str]:
-    """Tickets for every case's store: a pipeline tickets.db (old or Interface 7 columns), a
-    JSON list, or by default the pipeline's fixture tickets. Returns (rows, where they came from)."""
+    """Tickets for every case's store: a pipeline tickets.db (old or Interface 7 columns) or a
+    JSON list. By default the shared store, data/tickets.db, if present (the locked status-check
+    and duplicate cases point at its tickets), else the pipeline's fixture tickets.
+    Returns (rows, where they came from)."""
+    if not path and DEFAULT_TICKETS.exists():
+        path = str(DEFAULT_TICKETS)
     if path:
         p = Path(path)
         if p.suffix == ".json":
@@ -404,6 +446,9 @@ def run(kind: str, setup_name: str, test_path: str, test_name: str, *, mode: str
     if kind not in ("classify", "agent"):
         raise RunError(f"unknown run kind {kind!r}")
     test_hash = testset.file_hash(test_path)
+    # Checked before the file is parsed, so a partly downloaded copy gets this message, not a JSON error.
+    # A replay is checked against its own manifest instead (reproduce).
+    lock = lock_status(test_path, test_hash) if mode != "replay" else None
     cases = testset.load(test_path)[: limit or None]
     run_id = run_id or run_id_for(setup_name, test_name, test_hash, day)
     cache_dir = results_dir / "cache" / run_id
@@ -499,7 +544,10 @@ def run(kind: str, setup_name: str, test_path: str, test_name: str, *, mode: str
                     "test_set": test_name, "test_file": Path(test_path).resolve().relative_to(ROOT).as_posix()
                     if Path(test_path).resolve().is_relative_to(ROOT) else str(test_path),
                     "test_set_hash": test_hash, "n_cases": len(rows), "limit": limit,
-                    "tickets_path": tickets_path, "created": day or date.today().isoformat(),
+                    "test_set_lock": lock,
+                    "tickets_path": tickets_path or (_rel(DEFAULT_TICKETS) if kind == "agent" and
+                                                     DEFAULT_TICKETS.exists() else None),
+                    "created": day or date.today().isoformat(),
                     "git_commit": _git_commit(), "harness_version": HARNESS_VERSION,
                     "frozen_clock": FROZEN_NOW.isoformat(), **extra}
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -537,6 +585,8 @@ def reproduce(results_dir: Path = RESULTS) -> int:
         same = before is not None and before == csv_path.read_bytes()
         print(f"replayed      {m['run_id']}: {'identical to the committed file' if same else 'results file rewritten'}")
     csvs = score.result_files(results_dir)
+    for p in score.other_csvs(results_dir):
+        print(f"skipped       {p.name}: not a harness results file (no run_id column)")
     if not csvs:
         print("no results files yet, so nothing to rebuild: run the harness first (README, Evaluation)")
         return 1 if problems else 0
@@ -558,7 +608,8 @@ def main(argv: list[str] | None = None) -> int:
         q.add_argument("--run-id")
         q.add_argument("--limit", type=int, help="first N cases only (smoke runs)")
         if kind == "agent":
-            q.add_argument("--tickets", help="tickets.db or tickets.json for every case's store")
+            q.add_argument("--tickets", help="tickets.db or tickets.json for every case's store "
+                                             "(default: data/tickets.db if present, else the fixture tickets)")
             q.add_argument("--judge", help="judge setup name from setups.yaml")
     sub.add_parser("reproduce", help="replay recorded runs and rescore every results file")
     sub.add_parser("setups", help="list setup names")

@@ -24,7 +24,7 @@ from src.eval.cache import Cache
 
 DEMO_CASES = harness.ROOT / "data" / "demo" / "demo_cases.jsonl"
 DEMO_TICKETS = harness.ROOT / "data" / "demo" / "demo_tickets.json"
-STORE = harness.ROOT / "data" / "tickets.db"   # the v3 ticket store (data_v3), git-ignored
+STORE = harness.DEFAULT_TICKETS   # the v3 ticket store (data_v3), git-ignored
 
 
 def ticket_source(path: str | None = None) -> Path:

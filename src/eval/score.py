@@ -278,9 +278,26 @@ def comparisons(runs: dict[str, list[dict]]) -> list[dict]:
     return out
 
 
+def is_results_file(path: Path) -> bool:
+    """A results file the harness wrote: its header starts with run_id (docs/results_format.md).
+    Other CSVs in results/, such as notebook outputs, are not scored."""
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            header = next(csv.reader(fh), [])
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return False
+    return header[:1] == ["run_id"] and "expected_action" in header
+
+
 def result_files(results_dir: Path) -> list[Path]:
-    """Results files to score: every results/<run_id>.csv except examples (fake_*)."""
-    return sorted(p for p in Path(results_dir).glob("*.csv") if not p.name.startswith("fake"))
+    """Results files to score: every results/<run_id>.csv the harness wrote, except examples (fake_*)."""
+    return sorted(p for p in Path(results_dir).glob("*.csv") if not p.name.startswith("fake") and is_results_file(p))
+
+
+def other_csvs(results_dir: Path) -> list[Path]:
+    """CSVs in results/ that are not harness results files (left out of the summary)."""
+    return sorted(p for p in Path(results_dir).glob("*.csv") if not p.name.startswith("fake")
+                  and not is_results_file(p))
 
 
 def summarize(paths: list[Path]) -> dict:
