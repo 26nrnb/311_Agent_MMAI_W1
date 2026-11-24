@@ -86,6 +86,19 @@ def _git_commit() -> str | None:
         return None
 
 
+def lazy_classifier(name: str):
+    """A classifier setup that loads only when a text actually needs classifying. Replays use it:
+    their answers come from the cache, so the model (and torch) is never needed."""
+    from src.eval import setups
+    loaded = []
+
+    def classify(text: str) -> dict:
+        if not loaded:
+            loaded.append(setups.classifier(name))
+        return loaded[0](text)
+    return classify
+
+
 def _rel(path: Path) -> str:
     """A path for the manifest: relative to the repo when it is inside it."""
     p = Path(path).resolve()
@@ -457,7 +470,9 @@ def run(kind: str, setup_name: str, test_path: str, test_name: str, *, mode: str
         raise RunError(f"run {run_id} already exists; pass --run-id for a new one, or use `reproduce`")
     s = setups.setup("classifier" if kind == "classify" else "agent", setup_name)
     clf_name = setup_name if kind == "classify" else s.get("classifier", "keyword_stub")
-    classify_fn = setups.classifier(clf_name)
+    # A replay reads every classifier answer from the cache, so a fine-tuned classifier's weights and
+    # torch needn't be installed to reproduce a run (a marker's machine has neither).
+    classify_fn = lazy_classifier(clf_name) if mode == "replay" else setups.classifier(clf_name)
     clf_cache = Cache(cache_dir / "classifier.jsonl", mode)
     rows, log = [], (lambda msg: None) if quiet else print
     started = time.perf_counter()

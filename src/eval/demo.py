@@ -67,7 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Demo rehearsal on {setups.label('agent', a.setup)} (config: {source}; tickets: {where}, "
           f"{len(tickets)})\n")
     passed = 0
-    with harness._patched(llm_cache, clf_cache, setups.classifier(clf_name), clf_name) as seen:
+    classify_fn = harness.lazy_classifier(clf_name) if a.replay else setups.classifier(clf_name)
+    with harness._patched(llm_cache, clf_cache, classify_fn, clf_name) as seen:
         for case in cases:
             seen.clear()
             from src.agent.orchestrator import SetupError
