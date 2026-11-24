@@ -23,6 +23,9 @@
   --l2: #f1f1fb; --l2-ink: #3c41a3;
   --l3: #fdf4ec; --l3-ink: #b4530f;
   --l4: #eef4fa; --l4-ink: #1f5f8b;
+  --l5: #f8eff6; --l5-ink: #9b2c6f;
+  --l6: #f3f4f6; --l6-ink: #3b4252;
+  --code-only: #15803d; --prompt-only: #a16207;
   --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
   --text: "Inter", "Segoe UI", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
@@ -32,7 +35,7 @@
     --bg: #11141b; --fg: #e8ebf2; --muted: #9aa2b4; --border: #2e3442; --card: #181c25; --wire: #c9cfdc;
     --code-bg: #232836; --team: #f08a4b; --team-bg: #2a1d14; --auto: #a78bfa; --db: #7ea2ff; --db-bg: #182035;
     --l1: #13201a; --l1-ink: #5fd39c; --l2: #191a2b; --l2-ink: #a5a9f5; --l3: #251b13; --l3-ink: #f2a466;
-    --l4: #142030; --l4-ink: #7cc0ea;
+    --l4: #142030; --l4-ink: #7cc0ea; --l5: #24161f; --l5-ink: #f08cc8; --l6: #1b1f27; --l6-ink: #c9cfdc; --code-only: #4ade80; --prompt-only: #facc15;
     color-scheme: dark;
   }
 }
@@ -40,7 +43,7 @@
   --bg: #11141b; --fg: #e8ebf2; --muted: #9aa2b4; --border: #2e3442; --card: #181c25; --wire: #c9cfdc;
   --code-bg: #232836; --team: #f08a4b; --team-bg: #2a1d14; --auto: #a78bfa; --db: #7ea2ff; --db-bg: #182035;
   --l1: #13201a; --l1-ink: #5fd39c; --l2: #191a2b; --l2-ink: #a5a9f5; --l3: #251b13; --l3-ink: #f2a466;
-  --l4: #142030; --l4-ink: #7cc0ea;
+  --l4: #142030; --l4-ink: #7cc0ea; --l5: #24161f; --l5-ink: #f08cc8; --l6: #1b1f27; --l6-ink: #c9cfdc; --code-only: #4ade80; --prompt-only: #facc15;
   color-scheme: dark;
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--text); }
@@ -77,7 +80,23 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; background: var(--cod
 .lane.l2 .lane-head { background: var(--l2); } .lane.l2 .lane-head .eyebrow, .lane.l2 h2 { color: var(--l2-ink); }
 .lane.l3 .lane-head { background: var(--l3); } .lane.l3 .lane-head .eyebrow, .lane.l3 h2 { color: var(--l3-ink); }
 .lane.l4 .lane-head { background: var(--l4); } .lane.l4 .lane-head .eyebrow, .lane.l4 h2 { color: var(--l4-ink); }
+.lane.l5 .lane-head { background: var(--l5); } .lane.l5 .lane-head .eyebrow, .lane.l5 h2 { color: var(--l5-ink); }
+.lane.l6 .lane-head { background: var(--l6); } .lane.l6 .lane-head .eyebrow, .lane.l6 h2 { color: var(--l6-ink); }
+.l5 .num { background: var(--l5-ink); }
+.lane.l5 .lane-body { padding-bottom: 58px; }
 .lane-head strong { color: var(--fg); }
+
+/* Edge cases: a grid of cards, no wires. "where" names the steps of lane 2 that catch the case. */
+.edge-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 14px; padding: 26px 22px 22px; }
+.edge-grid .card { padding-top: 12px; }
+.edge-grid .where { display: block; margin-top: 7px; font: 600 11.5px var(--text); color: var(--fg); }
+.edge-grid .where b { font-weight: 700; color: var(--l2-ink); }
+.edge-grid .out { display: block; margin-top: 3px; font-size: 12px; }
+.enf { position: absolute; top: -9px; right: 10px; font: 700 9.5px/17px var(--text); letter-spacing: 0.05em; padding: 0 7px; border-radius: 999px; color: #fff; }
+.enf.code { background: var(--code-only); } .enf.prompt { background: var(--prompt-only); }
+.lane-head .enf { position: static; display: inline-block; margin-right: 4px; }
+:root[data-theme="dark"] .enf { color: #11141b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .enf { color: #11141b; } }
 
 .card {
   position: relative; z-index: 2; background: var(--card); border: 1px solid var(--border); border-radius: 9px;
@@ -129,7 +148,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
 
 <div class="page">
   <h1>Gilead 311: from a resident's message to a ticket</h1>
-  <p class="sub">311 Intake Agent · how a message is screened, run through the interaction tree and a model, answered and logged in Supabase, and how the team watches and changes the agent from <code>/admin</code>. Live at 311.scurrycat.ca · 8 service codes · 60 policy rules, 30 of them hard.</p>
+  <p class="sub">311 Intake Agent · how a message is screened, run through the interaction tree and a model, answered and logged in Supabase, how the team watches and changes the agent from <code>/admin</code>, how the training data and classifiers are made offline, and where each edge case is caught. Live at 311.scurrycat.ca · 8 service codes · 60 policy rules, 30 of them hard.</p>
 
   <div class="legend" aria-label="Legend">
     <span><svg width="40" height="10" aria-hidden="true"><line x1="0" y1="5" x2="32" y2="5" style="stroke:var(--wire)" stroke-width="1.6"/><path d="M31,1 L39,5 L31,9 z" style="fill:var(--wire)"/></svg>Data flow</span>
@@ -141,7 +160,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
 
   <div class="scroller" id="scroller">
     <div class="fit" id="fit">
-      <div class="diagram" id="dia" role="img" aria-label="Architecture of the Gilead 311 site in four lanes: a resident's message reaches the container through Cloudflare, runs through eight steps of screening, classification, interaction trees, model calls and tools, is answered and logged in Supabase; the team watches and edits the agent in /admin, and code changes are deployed by rebuilding the container.">
+      <div class="diagram" id="dia" role="img" aria-label="Architecture of the Gilead 311 site in four lanes: a resident's message reaches the container through Cloudflare, runs through eight steps of screening, classification, interaction trees, model calls and tools, is answered and logged in Supabase; the team watches and edits the agent in /admin, and code changes are deployed by rebuilding the container. A fifth lane shows the offline work: synthetic data generation, fine-tuning the classifiers, locking the test sets and evaluation. A final panel lists the edge cases and the step that catches each.">
         <svg id="wires" aria-hidden="true">
           <defs>
             <marker id="ah" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--wire)"/></marker>
@@ -210,8 +229,11 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
               <h3>Before-tool tree</h3>
               <p>Checks each tool call first and can block it:</p>
               <ul>
-                <li>policy looked up before fields or a ticket (A2)</li>
-                <li>one ticket per issue (A8)</li>
+                <li>policy looked up before a ticket (A2)</li>
+                <li>search for duplicates first (A10)</li>
+                <li>one ticket per issue (A8); none for a status check (A12)</li>
+                <li>escalation trigger: hand off (E2)</li>
+                <li>injection in arguments (S5)</li>
                 <li>status needs ticket number and postal code (D5)</li>
               </ul>
             </div>
@@ -335,7 +357,7 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
           <div class="lane-head">
             <div class="eyebrow">Lane 4 · Code and deploy</div>
             <h2>Code changes</h2>
-            <p>Only new code needs a deploy. The container keeps no data of its own.</p>
+            <p>Only new code or new classifier weights need a deploy. The container keeps no data of its own.</p>
           </div>
           <div class="lane-body">
             <div class="card team" id="n-code">
@@ -359,12 +381,162 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
             </div>
           </div>
         </section>
+
+        <!-- LANE 5 -->
+        <section class="lane l5" id="lane5">
+          <div class="lane-head">
+            <div class="eyebrow">Lane 5 · Offline, on Kaggle</div>
+            <h2>Data and classifiers</h2>
+            <p>Done before the site runs, outside it. Generated data, keys and test sets stay off GitHub; code, notebooks, <code>LOCK.md</code> and <code>results/</code> are committed.</p>
+          </div>
+          <div class="lane-body">
+            <div class="card team" id="n-spec">
+              <span class="num">1</span><span class="badge team">TEAM</span>
+              <h3>Policy and hand-written cases</h3>
+              <p>Operating Policy v1.0 (<code>policy.yaml</code>) fixes the 10 route codes, 20 escalation triggers, 10 outcomes and the edge cases. The team writes 105 test messages by hand; the policy adds 84 edge cases. Both stay in <code>data/protected/</code>.</p>
+            </div>
+            <div class="card" id="n-gen">
+              <span class="num">2</span>
+              <h3>Generate synthetic messages</h3>
+              <p><code>src/data_gen/synth_311_pipeline.py</code> (prompt 311-v5). Each scenario fixes the gold label; 3 OpenRouter models at 4 temperatures write the message; Faker fills fake names, addresses and IDs.</p>
+              <ul>
+                <li>50% easy, 30% hard (look-alikes, near-miss duplicates, triggers), 20% adversarial</li>
+                <li>QC with reasons; near-copies of protected cases dropped</li>
+                <li>split by scenario template; adversarial test rows sealed</li>
+                <li>the team reads <code>review.csv</code>; 3,295 kept</li>
+              </ul>
+            </div>
+            <div class="card" id="n-train">
+              <span class="num">3</span>
+              <h3>Fine-tune the classifiers</h3>
+              <p>NB-05 on a Kaggle GPU: DistilRoBERTa and ModernBERT-base on <code>train.jsonl</code>, 85/15 split by template, 5 epochs, best by macro-F1. Validation macro-F1 0.88 and 0.86.</p>
+              <p style="margin-top:6px">NB-04 runs prompted Haiku and Sonnet baselines on the same 343 rows (macro-F1 0.82 to 0.86).</p>
+            </div>
+            <div class="card" id="n-lock">
+              <span class="num">4</span>
+              <h3>Lock the test sets</h3>
+              <p>NB-03: held-out (774 cases: generated, hand-written and policy edge cases), production-like (340) and adversarial (118). Leakage checks against train; each file's SHA-256 in <code>data/test/LOCK.md</code>. Nothing is tuned on them.</p>
+            </div>
+            <div class="card" id="n-eval">
+              <span class="num">5</span>
+              <h3>Evaluate</h3>
+              <p><code>run.py eval classify</code> scores a classifier; <code>eval agent</code> runs the whole agent through the same turn as lane 2. Results go to <code>results/</code>; <code>make reproduce</code> rebuilds them from cached answers.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- EDGE CASES -->
+        <section class="lane l6" id="lane6">
+          <div class="lane-head">
+            <div class="eyebrow">Edge cases</div>
+            <h2>Where each is caught</h2>
+            <p>Bold numbers are the steps in lane 2.</p>
+            <p><span class="enf code">CODE</span> a check in code; the model can't skip it</p>
+            <p><span class="enf prompt">PROMPT</span> only the system prompt asks for it</p>
+          </div>
+          <div class="edge-grid">
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Emergency</h3>
+              <p>Gas smell, sparking wire, crash with injuries.</p>
+              <span class="where"><b>1</b> emergency patterns → <b>2</b> message tree</span>
+              <span class="out">911 reply, no ticket (E1). Look-alikes (a leaking hydrant, a fire pit) don't match and go on as normal; the training data has them on purpose.</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Crisis, or asks for a person</h3>
+              <p>Self-harm, distress, a complaint about staff, legal threats.</p>
+              <span class="where"><b>1</b> pattern lists → <b>2</b> message tree</span>
+              <span class="out">Handed to a person, with the crisis line for self-harm (E8, E7).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Prompt injection</h3>
+              <p>"Ignore your rules", hidden instructions, instructions inside tool arguments.</p>
+              <span class="where"><b>1</b> injection list → <b>2</b> warns the model; <b>4</b> checks tool arguments</span>
+              <span class="out">Treated as text, never followed (S1, S5).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Personal data</h3>
+              <p>SIN, card, health card, date of birth, passport.</p>
+              <span class="where"><b>1</b> redacted; <b>5</b> <code>create_ticket</code> refuses it; <b>8</b> logs masked</span>
+              <span class="out">Never stored (D2); names, phones and addresses are masked in every log (D6).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Unclear category</h3>
+              <p>Classifier confidence under 0.70, top two within 0.10, or no valid code.</p>
+              <span class="where"><b>2</b> after-classifier tree</span>
+              <span class="out">One clarifying question; still unsure, a person (E3, F2).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Hazard trigger</h3>
+              <p>One of the 20 triggers: a deep pothole, an injured dog, no heat, near a school.</p>
+              <span class="where"><b>4</b> trigger gate before <code>create_ticket</code></span>
+              <span class="out">Handed off with the draft ticket (E2); a vague location is asked for once first.</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Missing or wrong details</h3>
+              <p>A field missing, a location like "near the big tree", a value not on the list.</p>
+              <span class="where"><b>5</b> <code>create_ticket</code> refuses → <b>6</b> after-tool tree</span>
+              <span class="out">Asks for one field at a time (M2, A11, A4); after two tries, a person (E6).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Duplicate</h3>
+              <p>An open ticket already covers it, within that code's radius and days.</p>
+              <span class="where"><b>4</b> must search first → <b>6</b> after-tool tree</span>
+              <span class="out">Points to the open ticket, files no second one (A10, C6); one ticket per request (A8).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Status check</h3>
+              <p>"Any update on 311-2026-000123?"</p>
+              <span class="where"><b>4</b> blocks a new ticket, needs the postal code; <b>5</b> <code>get_status</code></span>
+              <span class="out">Status only with the ticket number and its postal code (D5, A12); a number plus a new problem gets one question.</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Out of scope or private property</h3>
+              <p>A streetlight, a tree in a backyard, dumping on private land.</p>
+              <span class="where"><b>5</b> <code>policy_lookup</code> routes OOS; <code>create_ticket</code> refuses not-handled cases</span>
+              <span class="out">No ticket; says what it can help with and offers a person (A8, E10).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>A reply it shouldn't send</h3>
+              <p>An invented ticket ID, a false "created", a date, visit, priority, fine or refund.</p>
+              <span class="where"><b>7</b> reply tree</span>
+              <span class="out">Invented IDs or claims go to a person (M3); promises are replaced with approved wording (C1 to C4, C7); rule tags stripped (D8).</span>
+            </div>
+            <div class="card"><span class="enf code">CODE</span>
+              <h3>Something fails</h3>
+              <p>A tool or model fails twice, no answer in 8 round trips, config unreachable.</p>
+              <span class="where"><b>3</b>, <b>5</b> retry once → failure trees</span>
+              <span class="out">A person, never a claimed ticket (E9, F3); step limit (M4); no config, chat answers 503 (F4).</span>
+            </div>
+            <div class="card"><span class="enf prompt">PROMPT</span>
+              <h3>Not in English</h3>
+              <p>About 18% of the generated messages.</p>
+              <span class="where"><b>3</b> system prompt</span>
+              <span class="out">Handed off as handoff_language (M6); hazards and emergencies keep their safety outcome.</span>
+            </div>
+            <div class="card"><span class="enf prompt">PROMPT</span>
+              <h3>Several issues or conflicting details</h3>
+              <p>"Pothole and my streetlight is out", two different addresses.</p>
+              <span class="where"><b>3</b> system prompt</span>
+              <span class="out">Handles each; more than two, or still conflicting after one question, goes to a person (E4, E5).</span>
+            </div>
+            <div class="card"><span class="enf prompt">PROMPT</span>
+              <h3>Pressure or abuse</h3>
+              <p>"Your chatbot promised", a claimed councillor, abusive language.</p>
+              <span class="where"><b>3</b> system prompt; <b>7</b> catches promises</span>
+              <span class="out">Approved wording, no other residents' data (S2, S3, S7); <code>search_tickets</code> returns no names (D3).</span>
+            </div>
+            <div class="card">
+              <h3>How they're tested</h3>
+              <p>The 84 policy edge cases and all 20 triggers, each with look-alikes, are in the locked held-out set; injection, PII and pressure cases are in the sealed adversarial set (lane 5). <code>pytest</code> checks each tree and tool rule with a scripted model.</p>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   </div>
 
   <footer>
-    <span>Sources: TerraIncognito-sudo/311_Agent_MMAI on GitHub (src/web/server.py, src/agent/orchestrator.py, src/agent/flow.py, src/models/classifier.py, src/web/admin.py, src/web/analytics.py, docker-compose.yml, docs/deployment.md).</span>
+    <span>Sources: TerraIncognito-sudo/311_Agent_MMAI on GitHub (src/web/server.py, src/agent/orchestrator.py, src/agent/flow.py, src/models/classifier.py, src/web/admin.py, src/web/analytics.py, docker-compose.yml, docs/deployment.md, src/data_gen/, notebooks/nb-05-finetune-v2.ipynb, notebooks/nb-04-prompted-baselines-v2.ipynb, notebooks/NB-03_test_lock.ipynb, data/test/LOCK.md).</span>
     <span>Synthetic data only. Gilead is a placeholder city.</span>
   </footer>
 </div>
@@ -403,6 +575,9 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
     const [watch, review, change, save] = ["n-watch", "n-review", "n-change", "n-save"].map(B);
     const [code, push, rebuild, live] = ["n-code", "n-push", "n-rebuild", "n-live"].map(B);
     const [L1, L2, L3, L4] = ["lane1", "lane2", "lane3", "lane4"].map(B);
+    const [spec, gen, train, lock, ev5] = ["n-spec", "n-gen", "n-train", "n-lock", "n-eval"].map(B);
+    const top5 = spec.t + 56;                                         // row height of the straight lane 5 wires
+    const below5 = Math.max(spec.b, gen.b, train.b, lock.b) + 16;    // under the lane 5 cards
     const g12 = mid(L1.b, L2.t), g23 = L2.b, g34 = mid(L3.b, L4.t);
     const gap23 = L3.t - L2.b;
     const row12 = mid(s[3].b, s[6].t), row23 = mid(s[8].b, cache.t);
@@ -444,6 +619,13 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6p
       { pts: right(code, push, code.cy) },
       { pts: right(push, rebuild, code.cy) },
       { pts: right(rebuild, live, code.cy) },
+      // lane 5
+      { pts: right(spec, gen, top5) },
+      { pts: right(gen, train, top5) },
+      { pts: [[gen.x(0.4), gen.b], [gen.x(0.4), below5], [lock.x(0.35), below5], [lock.x(0.35), lock.b]], label: "test split + sealed adversarial", seg: 1, f: 0.35 },
+      { pts: [[spec.x(0.5), spec.b], [spec.x(0.5), below5 + 18], [lock.x(0.65), below5 + 18], [lock.x(0.65), lock.b]], label: "hand-written + policy edge cases", seg: 1, f: 0.2 },
+      { pts: right(lock, ev5, top5) },
+      { pts: [[train.cx, train.t], [train.cx, rebuild.b]], label: "weights copied to the server by hand", seg: 0, team: true },
     ];
   }
 
