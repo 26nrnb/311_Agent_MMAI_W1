@@ -11,15 +11,16 @@ label, in this order (the first that applies wins):
      ... under a rule listed under handoff_language (M6)            handoff_language
      ... under any other rule                                       escalate_human
   3. two or more tickets created                                    handle_each
-  4. one ticket created (a genuine request with hidden
-     instructions is still a ticket, S5)                            create_ticket
-     create_ticket refused a case the catalogue doesn't handle
-     (A8, a private tree)                                           its outcome (handoff_oos)
-  5. a reply named an open ticket search_tickets returned, or used
-     the possible_duplicate wording (C6)                            link_duplicate
-  6. get_status found the resident's ticket (A12)                   report_status
-  7. the tree fired a refusal rule (S1...), or a reply used the
-     who_reported wording (D4)                                      refuse_and_continue
+  4. no ticket, and create_ticket refused a case the catalogue
+     doesn't handle (A8, a private tree)                            its outcome (handoff_oos)
+     no ticket, and a reply named an open ticket search_tickets
+     returned, or used the possible_duplicate wording (C6)          link_duplicate
+     no ticket, and get_status found the resident's ticket (A12)    report_status
+  5. the tree fired a refusal rule (S1...), or a reply used the
+     who_reported wording (D4), even if the genuine part of the
+     request became a ticket (the "continue")                       refuse_and_continue
+  6. one ticket created (a genuine request with instructions hidden
+     in its fields is still a ticket: S5 is not a refusal rule)     create_ticket
   8. a reply used the out_of_scope wording, or kb_search answered
      a general question while no request was being taken (A13)      handoff_oos
   9. the reply asks the resident something                          ask_clarification
@@ -79,16 +80,18 @@ def outcome(state: RuleState, reply: str) -> str | None:
         return "escalate_human"
     if len(state.ticket_ids) >= 2:
         return "handle_each"
-    if state.ticket_ids:
-        return "create_ticket"
-    if state.not_handled in OUTCOMES:
-        return state.not_handled
-    if state.linked_id or "possible_duplicate" in state.wordings:
-        return "link_duplicate"
-    if state.status_found:
-        return "report_status"
+    if not state.ticket_ids:
+        if state.not_handled in OUTCOMES:
+            return state.not_handled
+        if state.linked_id or "possible_duplicate" in state.wordings:
+            return "link_duplicate"
+        if state.status_found:
+            return "report_status"
+    # Same order as the eval's own rules (src/eval/outcome.py 6, 7): a refusal outranks one ticket.
     if state.fired & (_rules("refuse_and_continue") - _NOT_A_REFUSAL) or "who_reported" in state.wordings:
         return "refuse_and_continue"
+    if state.ticket_ids:
+        return "create_ticket"
     if "out_of_scope" in state.wordings or (state.kb_answered and not state.looked_up):
         return "handoff_oos"
     if "?" in (reply or ""):

@@ -1,5 +1,5 @@
 """Failure handling F1-F4 / E9: every failure ends in a clean handoff, never a claimed ticket."""
-from conftest import tool_call
+from conftest import INTRO, tool_call
 from src.agent.orchestrator import SetupError, handle_turn
 from src.models.llm import LLMError
 
@@ -15,7 +15,7 @@ def test_f1_model_timeout_retried_once_then_e9(llm, sel, fresh_store):
 
 def test_f1_model_recovers_on_retry(llm, sel):
     llm(LLMError("timed out"), "Which bin type is it?")
-    assert handle_turn(None, "bin broken", sel)["reply"] == "Which bin type is it?"
+    assert handle_turn(None, "bin broken", sel)["reply"] == INTRO + "Which bin type is it?"
 
 
 def test_f3_create_ticket_failure_hands_off(llm, sel, fresh_store):
