@@ -304,20 +304,31 @@ def rerun_ids(events: list[dict]) -> set[str]:
     return {e["interaction_id"] for e in events if e["step"] == "rerun"}
 
 
+def _json(text) -> dict:
+    try:
+        v = json.loads(text or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return v if isinstance(v, dict) else {}
+
+
 def run_detail(interaction_id: str, events: list[dict]) -> dict:
     turns: list[dict] = []
     cur = None
     marker_model = None
+    marker_classifier = None
     models: list[str] = []
+    classifiers: list[str] = []
     outcome = {"ticket": False, "handoff": False, "emergency": False}
     handoff_rule = None
     for e in events:
         step, rule = e["step"], e.get("rule_id")
         if step == "rerun":
             marker_model = e.get("model")
+            marker_classifier = _json(e.get("text")).get("classifier")
             continue
         if step == "input_screen":
-            cur = {"message": e.get("text"), "reply": None, "reply_ms": None, "tools": [], "rules": [],
+            cur = {"message": e.get("text"), "reply": None, "reply_ms": None, "tools": [], "rules": [], "classifier": None,
                    "calls": 0, "call_ms": 0, "errors": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0,
                    "_t": _ts(e["created_at"])}
             turns.append(cur)
@@ -336,6 +347,12 @@ def run_detail(interaction_id: str, events: list[dict]) -> dict:
             cur["tokens_in"] += int(e.get("tokens_in") or 0)
             cur["tokens_out"] += int(e.get("tokens_out") or 0)
             cur["cost"] += float(e.get("cost_usd") or 0)
+        elif step == "classifier":
+            got = _json(e.get("text"))
+            cur["classifier"] = {"setup": e.get("model"), "code": got.get("code"), "confidence": got.get("confidence"),
+                                 "outcome": e.get("outcome"), "ms": e.get("latency_ms")}
+            if e.get("model") and e["model"] not in classifiers:
+                classifiers.append(e["model"])
         elif step.startswith("tool:"):
             cur["tools"].append({"name": step[5:], "outcome": e.get("outcome")})
             if step == "tool:create_ticket" and ok:
@@ -357,6 +374,7 @@ def run_detail(interaction_id: str, events: list[dict]) -> dict:
     return {
         "interaction_id": interaction_id,
         "model": marker_model or (" + ".join(models) if models else "tree"),
+        "classifier": marker_classifier or (" + ".join(classifiers) if classifiers else None),
         "rerun": marker_model is not None,
         "started_at": events[0]["created_at"] if events else None,
         "outcome": "handoff" if outcome["handoff"] else "ticket" if outcome["ticket"]
@@ -383,8 +401,12 @@ def compare(original: dict, run: dict) -> dict:
         tools = o is not None and [x["name"] for x in o["tools"]] == [x["name"] for x in t["tools"]]
         rules = o is not None and set(o["rules"]) == set(t["rules"])
         t["same_tools"], t["same_rules"] = tools, rules
+        oc, rc = (o or {}).get("classifier"), t.get("classifier")
+        t["same_code"] = None if not (oc and rc) else oc.get("code") == rc.get("code")
         same.append(tools and rules)
     run["same_turns"] = sum(same)
+    codes = [t["same_code"] for t in run["turns"] if t.get("same_code") is not None]
+    run["classified_turns"], run["same_codes"] = len(codes), sum(codes)
     run["same_outcome"] = run["outcome"] == original["outcome"]
     return run
 
@@ -416,3 +438,104 @@ def by_model(groups: list[dict]) -> list[dict]:
             "same_outcome_rate": p["same_outcome"] / p["reruns"] if p["reruns"] else None,
         })
     return sorted(out, key=lambda m: -m["runs"])
+
+
+def by_classifier(groups: list[dict]) -> list[dict]:
+    """Every run in the comparisons, pooled by classifier: how often it was sure, how fast,
+    and how often a re-run's classifier gave the original's code."""
+    pool: dict[str, dict] = {}
+    for g in groups:
+        for r in g["runs"]:
+            if not r.get("classifier"):
+                continue
+            p = pool.setdefault(r["classifier"], {"classifier": r["classifier"], "runs": 0, "reruns": 0, "results": [],
+                                                  "compared": 0, "same_codes": 0, "same_outcome": 0})
+            p["runs"] += 1
+            p["results"] += [t["classifier"] for t in r["turns"] if t.get("classifier")]
+            if r["rerun"]:
+                p["reruns"] += 1
+                p["compared"] += r.get("classified_turns") or 0
+                p["same_codes"] += r.get("same_codes") or 0
+                p["same_outcome"] += r["same_outcome"]
+    out = []
+    for p in pool.values():
+        res = p["results"]
+        conf = [float(x["confidence"]) for x in res if x.get("confidence") is not None]
+        ms = [int(x["ms"]) for x in res if x.get("ms") is not None and x.get("outcome") != "error"]
+        out.append({
+            "classifier": p["classifier"], "runs": p["runs"], "reruns": p["reruns"], "classified": len(res),
+            "unsure_rate": sum(x.get("outcome") != "sure" for x in res) / len(res) if res else None,
+            "mean_confidence": sum(conf) / len(conf) if conf else None,
+            "p50_ms": _pct(ms, 50),
+            "same_code_rate": p["same_codes"] / p["compared"] if p["compared"] else None,
+            "same_outcome_rate": p["same_outcome"] / p["reruns"] if p["reruns"] else None,
+        })
+    return sorted(out, key=lambda m: -m["runs"])
+
+
+# ---------------------------------------------------------------- classifier performance
+# Live conversations only (re-runs are compared in the re-runs card). Without labelled
+# answers this can't be accuracy; it is how sure each classifier was, how fast, and how
+# often its code was the one the conversation settled on (the ticket's code, else the
+# last code looked up), which is the agent agreeing with it, not proof it was right.
+
+CONFIDENCE_BANDS = [(0.0, 0.5, "under 0.50"), (0.5, 0.7, "0.50 to 0.69"), (0.7, 0.9, "0.70 to 0.89"), (0.9, 1.01, "0.90 and over")]
+
+
+def classifier_stats(events: list[dict], skip: set[str] = frozenset()) -> list[dict]:
+    """Per classifier setup, from CLASSIFIER_STEPS events (store.classifier_events)."""
+    final: dict[str, str] = {}      # conversation -> code it settled on
+    ticketed: set[str] = set()
+    per: dict[tuple[str, str], list[dict]] = {}
+    for e in events:
+        iid = e["interaction_id"]
+        if iid in skip:
+            continue
+        if e["step"] == "classifier":
+            per.setdefault((e.get("model") or "unknown", iid), []).append(e)
+            continue
+        if e.get("outcome") != "ok":
+            continue
+        code = (_json(e.get("text")).get("args") or {}).get("code")
+        code = str(code).strip().upper() if code else None
+        if not code:
+            continue
+        if e["step"] == "tool:create_ticket":
+            final[iid] = code
+            ticketed.add(iid)
+        elif iid not in ticketed:
+            final[iid] = code
+
+    pool: dict[str, dict] = {}
+    for (setup, iid), evs in per.items():
+        p = pool.setdefault(setup, {"conversations": 0, "results": [], "with_final": 0, "agree": 0})
+        p["conversations"] += 1
+        p["results"] += evs
+        last = next((r for r in reversed(evs) if r.get("outcome") != "error"), None)
+        code = _json(last.get("text")).get("code") if last else None
+        if iid in final:
+            p["with_final"] += 1
+            p["agree"] += code == final[iid]
+
+    out = []
+    for setup, p in pool.items():
+        res = p["results"]
+        parsed = [_json(r.get("text")) for r in res]
+        conf = [float(x["confidence"]) for x, r in zip(parsed, res)
+                if r.get("outcome") != "error" and x.get("confidence") is not None]
+        ms = [int(r["latency_ms"]) for r in res if r.get("latency_ms") is not None and r.get("outcome") != "error"]
+        n = len(res)
+        out.append({
+            "classifier": setup, "classifications": n, "conversations": p["conversations"],
+            "sure": sum(r.get("outcome") == "sure" for r in res),
+            "unsure": sum(r.get("outcome") == "unsure" for r in res),
+            "errors": sum(r.get("outcome") == "error" for r in res),
+            "unsure_rate": sum(r.get("outcome") != "sure" for r in res) / n if n else None,
+            "mean_confidence": sum(conf) / len(conf) if conf else None,
+            "bands": [{"label": label, "share": sum(lo <= c < hi for c in conf) / len(conf) if conf else 0}
+                      for lo, hi, label in CONFIDENCE_BANDS],
+            "p50_ms": _pct(ms, 50), "p95_ms": _pct(ms, 95),
+            "with_final": p["with_final"],
+            "agree_rate": p["agree"] / p["with_final"] if p["with_final"] else None,
+        })
+    return sorted(out, key=lambda m: -m["classifications"])

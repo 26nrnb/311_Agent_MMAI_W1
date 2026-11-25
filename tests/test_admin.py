@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from src.agent import orchestrator
 from src.web.server import app
-from conftest import tool_call
+from conftest import INTRO, tool_call
 
 client = TestClient(app)
 
@@ -27,8 +27,9 @@ def chat(message, iid=None):
 
 def test_walkthrough_traces_every_decision(llm, fresh_store):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
-            "address": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+            "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.")
     iid = chat("My recycling bin lid is cracked at 12 Oak Street").json()["interaction_id"]
 
@@ -151,7 +152,7 @@ def test_dashboard_edits_are_picked_up_by_the_sync(fresh_store):
     ("policy.yaml", lambda t: t + "\n  bad: [unclosed", "not valid YAML"),
     ("policy.yaml", lambda t: t.replace("wording:", "wordings:"), "wording"),
     ("policy.yaml", lambda t: t.replace("  E1: {", "  X1: {"), "E1"),
-    ("guardrails.yaml", lambda t: t.replace("'\\bfire\\b'", "'(unclosed'"), "bad regular expression"),
+    ("guardrails.yaml", lambda t: t.replace("'\\bsuicid'", "'(unclosed'"), "bad regular expression"),
     ("prompts/agent/system_v1.md", lambda t: t + "\n{not_a_placeholder}", "not_a_placeholder"),
     ("app.yaml", lambda t: t.replace("system_v1.md", "missing.md"), "doesn't exist"),
 ])
@@ -208,8 +209,9 @@ def test_kb_document_created_in_admin_is_searchable_at_once(fresh_store):
 
 def _ticket_conversation(llm):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
-            "address": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+            "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.")
     return chat("My recycling bin lid is cracked at 12 Oak Street").json()["interaction_id"]
 
@@ -228,7 +230,7 @@ def test_ticket_is_listed_linked_and_tracked(llm, fresh_store):
                      json={"status": "in_progress", "note": "crew booked", "author": "Sam"})
     assert ok.status_code == 200
     d = client.get(f"/api/admin/tickets/{tid}").json()
-    assert d["ticket"]["status"] == "in_progress" and d["required_fields"] == ["address", "bin_type", "damage_type"]
+    assert d["ticket"]["status"] == "in_progress" and d["required_fields"] == ["location", "bin_type", "damage_type"]
     u = d["updates"][0]
     assert (u["old_status"], u["new_status"], u["note"], u["author"]) == ("open", "in_progress", "crew booked", "Sam")
     assert client.get("/api/admin/tickets", params={"status": "open"}).json()["tickets"] == []
@@ -262,8 +264,9 @@ def test_pages_point_at_versioned_static_files():
 
 def test_analytics_counts_requests_outcomes_and_cost(llm, fresh_store):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
-            "address": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+            "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.",
         [tool_call("handoff", {"rule_id": "E3", "reason": "can't tell which service"})])
     chat("My recycling bin lid is cracked at 12 Oak Street")
@@ -274,14 +277,14 @@ def test_analytics_counts_requests_outcomes_and_cost(llm, fresh_store):
     t = d["totals"]
     assert len(d["rows"]) == 24 and d["tz"] == "America/Toronto"
     assert (t["requests"], t["ticket"], t["handoff"], t["answered"], t["emergencies"]) == (3, 1, 1, 1, 1)
-    assert (t["tickets"], t["handoffs"], t["turns"], t["model_calls"]) == (1, 1, 3, 4)
+    assert (t["tickets"], t["handoffs"], t["turns"], t["model_calls"]) == (1, 1, 3, 5)   # 5: + search_tickets (A10)
     assert d["rows"][-1]["requests"] == 3   # all in the current hour
     assert d["latency"]["turns"] == 3 and d["latency"]["p95_ms"] is not None
     assert d["codes"][0]["code"] == "SW-BIN" and d["handoff_rules"][0]["rule_id"] == "E3"
     # model speed: two replies came from the model, the 911 one from the tree alone
     speed = {r["model"]: r for r in d["speed"]}
     model = next(k for k in speed if k != "tree")
-    assert speed[model]["replies"] == 2 and speed[model]["calls"] == 4 and speed[model]["calls_per_reply"] == 2
+    assert speed[model]["replies"] == 2 and speed[model]["calls"] == 5 and speed[model]["calls_per_reply"] == 2.5
     assert speed[model]["call_p50_ms"] == 1 and speed[model]["tokens_per_s"] == 5000   # 5 tokens in 1 ms
     assert speed["tree"]["replies"] == 1 and speed["tree"]["calls"] == 0 and d["speed"][-1]["model"] == "tree"
     assert isinstance(d["handoff_rules"][0]["text"], str)
@@ -350,8 +353,9 @@ def _rerun(iid, model="other", provider="ollama", **headers):
 
 def test_rerun_replays_a_conversation_on_another_model_without_touching_records(llm, fresh_store):
     llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
         [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
-            "address": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+            "location": "12 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
         "Done.")
     iid = chat("My recycling bin lid is cracked at 12 Oak Street").json()["interaction_id"]
     assert len(fresh_store.tickets) == 1
@@ -359,7 +363,7 @@ def test_rerun_replays_a_conversation_on_another_model_without_touching_records(
     fake = llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
                [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
                [tool_call("create_ticket", {"code": "SW-BIN", "fields": {
-                   "address": "100 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
+                   "location": "100 Oak Street, G1A 1A1", "bin_type": "recycling", "damage_type": "cracked lid"}})],
                "Filed.")
     job = _rerun(iid)
     assert job.status == "done" and job.done == 1 and job.model == "ollama:other", job.error
@@ -382,13 +386,14 @@ def test_rerun_replays_a_conversation_on_another_model_without_touching_records(
     orig, run = g["runs"]
     assert not orig["rerun"] and run["rerun"] and run["outcome"] == orig["outcome"] == "ticket"
     assert [t["name"] for t in run["turns"][0]["tools"]] == ["policy_lookup", "search_tickets", "create_ticket"]
-    assert run["turns"][0]["same_tools"] is False and run["same_turns"] == 0 and run["same_outcome"]
-    assert run["calls"] == 4 and run["tokens_in"] == 40 and run["turns"][0]["reply"] == "Filed."
+    # both runs call the same tools now that A10 makes the original search first too
+    assert run["turns"][0]["same_tools"] is True and run["same_outcome"]
+    assert run["calls"] == 4 and run["tokens_in"] == 40 and run["turns"][0]["reply"] == INTRO + "Filed."
     assert {m["model"] for m in d["by_model"]} == {"ollama:m", "ollama:other"}
 
     # test traffic stays out of usage and cost
     t = client.get("/api/admin/analytics", params={"bucket": "hour", "periods": 2}).json()["totals"]
-    assert t["requests"] == 1 and t["model_calls"] == 3
+    assert t["requests"] == 1 and t["model_calls"] == 4   # the original only (+ search_tickets, A10)
 
     # re-running the re-run replays the original
     llm("Hello again.")

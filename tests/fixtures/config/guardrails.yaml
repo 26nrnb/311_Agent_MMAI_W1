@@ -1,16 +1,43 @@
 # Guardrail patterns (owner: B, W1 Policy and guardrails).
-# Used by src/guardrails/. Patterns are case-insensitive regular expressions.
-# Every list cites the rule ID it enforces.
+# Used by src/guardrails/. Patterns are case-insensitive regular expressions
+# (masking is case-sensitive; see its note). Every list cites the rule ID it enforces.
+#
+# version: v1.0, matching 311 Operating Policy v1.0 and policy.yaml v1.0.
+# Change log
+#   v0.1 (Nov 2)  first patterns
+#   v1.0 (Nov 20) E1: 'fire' no longer matches look-alikes such as 'fire hydrant'
+#                 or 'fire pit'; adds smoke from a building, sparking or exposed wires,
+#                 open manhole or sewer cover (Policy v1.0 E1, SDD 2.2).
+#                 E7: complaint about staff.  D2: driver's licence, passport.
+#                 D6: postal code masked after the first three characters.
+#                 C1/C2/C3/C4/C7: wider commitment list (time windows in words,
+#                 'urgent', by-law violation, the City paying, visit or inspection).
+#                 D6: phone no longer matches digits inside a UUID or longer ID.
+#   v1.0.1 (Nov 20) D2: health_card no longer blanks a ticket number followed by a
+#                 2-letter word ('311-2026-100308 in ...'); health_card_named added.
+#   v1.1 (Nov 20) A12: input_screen.status_request and new_report (status check vs new report).
+#                 A11: location_check.usable (street address, intersection, landmark on a street).
+#                 S5: the injection list also runs on tool arguments (flow.yaml args_injection).
+# Note: the input screen turns each list name below into a flag, so do not add a
+# new list under input_screen without code that handles the flag.
 
 input_screen:
-  # E1 [hard]: danger to life or safety now -> 911 wording, no ticket, no model call
+  # E1 [hard]: danger to life or safety now -> 911 wording, no ticket, no model call.
+  # A word alone such as 'fire hydrant' is not E1 (look-alikes in policy.yaml routes.EMERG).
   emergency:
-    - '\bfire\b'
-    - '\bon fire\b'
+    - '\bfire\b(?!\s*(?:hydrants?|pits?|hall|station|department|dept|route|lanes?|zone|extinguishers?|alarm test|code|inspect|safety|ban|works?)\b)'
+    - '\b(?:on fire|in flames|flames (?:coming|shooting))\b'
     - '\bsmell(s|ing)? (of )?gas\b'
     - '\bgas (leak|smell)\b'
+    - '\bsmoke\b[^.!?]{0,40}\b(?:building|house|home|apartment|condo|window|roof|garage|basement|unit|store|school)\b'
+    - '\b(?:building|house|home|apartment|condo|garage|basement|roof)\b[^.!?]{0,30}\bsmok(?:e|ing)\b'
     - '\blive (wire|wires|power line)\b'
     - '\bdowned (power )?lines?\b'
+    - '\b(?:wires?|cables?|power lines?|pole|transformer)\b(?:(?!\b(?:not|nothing|no|isn''t|aren''t)\b)[^.!?]){0,30}\bspark(?:s|ing|ed)?\b'
+    - '(?<!not )(?<!no )\bspark(?:s|ing)\b[^.!?]{0,30}\b(?:wires?|cables?|power lines?|pole|transformer)\b'
+    - '\b(?:exposed|bare|hanging|dangling) (?:electrical |electric |power )?(?:wires?|cables?)\b'
+    - '\b(?:open|missing|uncovered|no) (?:manhole|sewer)(?: cover| lid)?\b'
+    - '\b(?:manhole|sewer)(?: cover| lid)?\b[^.!?]{0,20}\b(?:open|missing|off|gone|removed)\b'
     - '\b(car )?crash\b.*\b(injur|hurt|bleed)'
     - '\b(break[- ]?in|robbery|assault) (in progress|happening)\b'
     - '\bsomeone is (threatening|attacking)\b'
@@ -21,7 +48,8 @@ input_screen:
     - '\bsuicid'
     - '\bend my life\b'
     - '\bwant to die\b'
-  # S1 / S5: prompt injection; flagged, treated as data, never obeyed
+  # S1 / S5: prompt injection; flagged, treated as data, never obeyed.
+  # S5: the same list also runs on tool arguments (location, description): flow.yaml args_injection.
   injection:
     - 'ignore (all |any )?(previous|prior|above|your) (instructions|rules|prompt)'
     - '\b(system prompt|developer message)\b'
@@ -33,6 +61,22 @@ input_screen:
   human_request:
     - '\b(speak|talk) (to|with) (a |an )?(human|person|agent|someone|supervisor|manager)\b'
     - '\b(lawyer|sue|lawsuit|legal action)\b'
+    - '\b(?:complain|complaint|complaining)\b[^.!?]{0,30}\b(?:staff|worker|crew|driver|employee|inspector|officer)\b'
+  # A12 [hard]: the message is about an existing request. A ticket number (311-YYYY-NNNNNN) counts
+  # too (checked in code). create_ticket is blocked until the resident says it is a new report.
+  status_request:
+    - '\b(?:any|an) update\b'
+    - '\bstatus (?:of|on|for)\b'
+    - '\b(?:check|checking|follow(?:ing)? up) on (?:my|the|a|our) (?:request|ticket|report|complaint)\b'
+    - '\bwhat(?:''s| is) happening with (?:my|the|our) (?:request|ticket|report)\b'
+    - '\b(?:is|has) (?:my|the|our) (?:request|ticket|report) (?:been )?(?:done|closed|fixed|resolved|still open)\b'
+  # A12: the resident says it is a new report. Counts only in a LATER message than the status check
+  # (the agent asks once first, Policy v1.0 A12).
+  new_report:
+    - '\bnew (?:report|request|ticket|problem|issue|one)\b'
+    - '\b(?:file|open|create|make|submit|start) (?:a )?(?:new |another |second )?(?:report|request|ticket)\b'
+    - '\bnot (?:a|about the|about my) status\b'
+    - '^\W*(?:new|a new one|it''s new|new please)\W*$'
 
 redaction:
   # D2 [hard]: never stored; replaced before storage AND before the model sees it
@@ -40,27 +84,72 @@ redaction:
   # Skips 311 ticket numbers (311-2026-000123), which also have 13 digits.
   payment_card: '\b(?!311-\d{4}-\d{6}\b)(?:\d[ -]?){13,16}\b'
   date_of_birth: '\b(?:dob|date of birth|born on)\b[^.\n]{0,25}\d'
-  health_card: '\b\d{4}[ -]?\d{3}[ -]?\d{3}[ -]?[A-Z]{2}\b'
+  # Ontario health card: 10 digits + a 2-letter version code in capitals (1234-567-890-AB).
+  # (?<![\w-]) and the case-sensitive (?-i:...) keep ticket numbers followed by a short word
+  # ("311-2026-100308 is still open") out of it (reported by Abi, Nov 20).
+  health_card: '(?<![\w-])\d{4}[ -]?\d{3}[ -]?\d{3}[ -]?(?-i:[A-Z]{2})\b'
+  # The same number in any case, or with no version code, when the resident names it
+  health_card_named: '(?:(?<=health card )|(?<=health card is )|(?<=health card number )|(?<=health card: )|(?<=ohip )|(?<=ohip is )|(?<=ohip number )|(?<=ohip: ))\d{4}[ -]?\d{3}[ -]?\d{3}(?:[ -]?[a-z]{2})?\b'
+  # D2 government ID: Ontario-style driver's licence (A1234-56789-01234); passport after the word
+  drivers_licence: '\b[A-Z]\d{4}[ -]?\d{5}[ -]?\d{5}\b'
+  passport: '\bpassport\b[^.\n]{0,20}\b[A-Z]{1,2}\d{6,7}\b'
 
 masking:
   # D6 [hard]: applied to every log write (interaction_events, handoffs).
   # Compiled case-SENSITIVE so the name pattern can rely on capitals; use
-  # (?i:...) for parts that should ignore case.
+  # (?i:...) for parts that should ignore case. A pattern with a group masks
+  # only the group.
   email: '[\w.+-]+@[\w-]+\.[\w.-]+'
-  phone: '(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}\b'
+  # (?<![\w-]) / (?![\w-]): not inside a longer ID such as a UUID or ticket number
+  phone: '(?<![\w-])(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?![\w-])'
   unit: '(?:\b(?i:unit|apt|apartment|suite)\s*#?|#\s*)\d+[a-zA-Z]?\b'
   street_number: '\b\d{1,6}(?=\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Dr|Drive|Cres|Crescent|Ct|Court|Way|Lane|Ln|Pl|Place|Terrace|Pkwy)\b)'
   name: '(?i:my name is|this is|i am|i''m)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)'
+  # D6: keep the first three characters (G1A), mask the rest ("G1A [POSTAL_CODE]")
+  postal_code: '(?i:\b[A-Z]\d[A-Z][ -]?(\d[A-Z]\d)\b)'
+
+location_check:
+  # A11 [hard]: create_ticket needs a usable location: a street address, an intersection, or a named
+  # landmark on a street ("the library on Elm St"). One that matches none of these ("near the big tree",
+  # "somewhere on my way to work") is refused as a missing field, so E6 hands off after two tries.
+  # Compiled case-SENSITIVE; (?i:...) marks parts that ignore case.
+  usable:
+    # a street number and a name: "45 Elm", "12B Oak Street"
+    - '\b\d{1,6}[A-Za-z]?\s+[A-Z][\w''.-]*'
+    # a name and a street word, in any case: "Elm St", "the library on king street"
+    - '(?<![\w''])(?!(?i:my|your|our|their|his|her|the|a|an|this|that|its|on|in|of|to|by|any|one|no|same)\b)[A-Za-z0-9][\w''.-]*\s+(?i:st|street|ave|avenue|rd|road|blvd|boulevard|cres|crescent|dr|drive|pkwy|parkway|hwy|highway)\b'
+    # street words that are also ordinary words need a capital: "Maple Lane", not "bike lane"
+    - '\b[A-Z][\w''.-]*\s+(?:Lane|Ln|Court|Ct|Way|Pl|Place|Terrace|Circle|Cir|Trail|Square|Sq|Gate|Grove|Row|Line)\b'
+    # an intersection: "Queen and Bathurst", "Elm & 2nd", "corner of King"
+    - '\b[A-Z][\w''.-]*\s+(?:and|&|at)\s+(?:[A-Z]|\d+(?:st|nd|rd|th)\b)'
+    - '(?i:\bcorner of\b)\s+[A-Z0-9]'
 
 output_check:
-  # C1/C2/C4: commitments the agent must never make. Flagged and logged;
-  # src/guardrails/output_check.py decides the action.
+  # C1/C2/C3/C4/C7 [hard]: commitments the agent must never make.
+  # Flagged and logged today; Policy v1.0 says replace the reply with the approved
+  # wording (src/guardrails/output_check.py + flow.yaml commitment node: to build).
   commitment:
-    - '\b(within|in) \d+ (business )?(hours?|days?|weeks?)\b'
+    # C1: a date or time window, in digits or words
+    - '\b(within|in) (?:\d+|a|an|one|two|three|four|five|a few|a couple of) (business )?(hours?|days?|weeks?|months?)\b'
     - '\b(by|on) (monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)\b'
-    - '\b(high|top|urgent) priority\b'
-    - '\b(refund|compensat|reimburs|waive)'
+    - '\b(?:will|should|going to|expect(?:ed)? to)\b[^.!?]{0,40}\b(?:today|tonight|tomorrow|this week|next week|by the end of the (?:day|week|month)|soon|shortly|right away)\b'
+    - '\b(?:target|service standard|turnaround) (?:time|is)\b'
+    # C2: a priority level or urgency for the City
+    - '\b(high|top|urgent|highest|low) priority\b'
+    - '\b(?:prioriti[sz]ed?|fast[- ]?track(?:ed)?|expedited?)\b'
+    - '\b(?:marked|flagged|treated|logged)\b[^.!?]{0,15}\b(?:as )?urgent\b'
+    # C3: a by-law violation or a fine
     - '\b(will be|you will be|they will be) fined\b'
+    - '\b(?:will|could|may|might) (?:be|get) (?:fined|ticketed|charged)\b'
+    - '\b(?:is|was|are|were|be|not) (?:a )?(?:by-?law )?violations?\b'
+    - '\b(?:violat(?:es|ed|ing)|breach(?:es|ed)?|against|breaking) (?:the |a |our )?(?:by-?laws?|bylaws?)\b'
+    # C4: refunds, compensation, liability, fee waivers
+    - '\b(refund|compensat|reimburs|waive)'
+    - '\b(?:the city|we|they) (?:will|is going to|are going to) (?:pay|cover)\b'
+    # C7: someone will visit, inspect or investigate
+    #   ("I can't say whether someone will visit" is the approved wording, so 'whether' / 'if' before the subject is allowed)
+    - '(?<!whether )(?<!if )\b(?:someone|somebody|an? crew|crews|an? inspector|an? officer|an? technician|staff|they|we|the city|the team|the unit)(?: will|''ll| is going to| are going to| shall)\b[^.!?]{0,25}\b(?:visit|inspect|investigate|come (?:out|by)|stop by|look into (?:it|this))\b'
+    - '\b(?:will|''ll|going to)\s+send\s+(?:someone|somebody|a crew|an inspector|an officer|staff|a technician)\b'
   # M3 [hard]: any ticket ID in a reply must have been returned by a tool
   ticket_id: '\b311-\d{4}-\d{6}\b'
   # M3 [hard]: claiming a request was created when create_ticket returned no ID

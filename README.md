@@ -9,7 +9,7 @@ only in Supabase and is edited at `/admin`.
 
 **All data is synthetic.** No real residents, addresses or City systems.
 
-- Chat site: plain chat page, choose the model in the top-right corner.
+- Chat site: plain chat page, choose the model and the classifier in the top-right corner.
 - Admin page at `/admin`: walk through any conversation decision by
   decision through the interaction tree, and edit the tree, config, prompts
   and the knowledge base in the browser (live, with history). No login yet.
@@ -19,10 +19,17 @@ only in Supabase and is edited at `/admin`.
 - Public access: Cloudflare Tunnel to the local server
   ([docs/deployment.md](docs/deployment.md)).
 
+## Architecture
+
+[![Architecture: a resident's message through the container to a ticket, the /admin page, and code deploys](docs/images/architecture_diagram.png)](docs/images/architecture_diagram.png)
+
+The interactive version is [docs/architecture_diagram.html](docs/architecture_diagram.html);
+the turn-by-turn description is in [docs/architecture.md](docs/architecture.md).
+
 ## Quick start
 
 Requires Python 3.11+ and, for local models, [Ollama](https://ollama.com)
-with at least one tool-capable model (for example `ollama pull qwen3:8b`).
+with at least one tool-capable model (the default is `ollama pull qwen3:4b-instruct`).
 
 ```bash
 python -m venv .venv
@@ -31,6 +38,10 @@ pip install -r requirements.txt
 cp .env.example .env          # then fill in the Supabase values
 python run.py serve           # http://127.0.0.1:8311
 ```
+
+The fine-tuned classifiers also need `pip install -r requirements-ml.txt` and
+their weights copied into `src/models/fine_tuning/` (gitignored; see
+[docs/deployment.md](docs/deployment.md)). Without them the keyword stub is used.
 
 No Supabase yet? Set `USE_MEMORY_STORE=1` in `.env` to run with an in-memory
 store (nothing persists across restarts).
@@ -91,9 +102,9 @@ returned them (policy rule C5).
   and the branch it took, with the tree beside it and the path highlighted.
   Model and tool calls show their arguments and results; tickets and
   handoffs come from the database. Tick *Follow newest* and chat on the
-  main site to watch a conversation live. *Re-run with another model*
-  replays the conversation's messages on a model you pick (Ollama or
-  OpenRouter); tickets and handoffs in a re-run are simulated, never filed.
+  main site to watch a conversation live. *Re-run with another model or classifier*
+  replays the conversation's messages on a model (Ollama or OpenRouter)
+  and/or classifier you pick; tickets and handoffs in a re-run are simulated, never filed.
 - **Tickets / Handoffs:** every ticket and handoff, live. Filter by status,
   code or rule, or search; open one to see what was collected, why it was
   handed off, the transcript, and the conversation behind it. Change its
@@ -114,8 +125,10 @@ returned them (policy rule C5).
   into tickets filed, handoffs and the rest; reply time against the 10 s
   target (G10); reply and inference time per model, to compare Ollama with
   a commercial model; tokens and spend per model; why requests were handed off;
-  re-runs side by side with their originals (speed, tokens, cost, and the
-  tools, rules and outcome of every turn); and the running cost (model +
+  classifiers per setup (unsure rate, confidence bands, time, and agreement
+  with the code the conversation settled on); re-runs side by side with their
+  originals (speed, tokens, cost, each turn's classifier code and confidence,
+  and the tools, rules and outcome of every turn); and the running cost (model +
   hosting + staff time on handoffs) against
   doing the same requests by hand. The cost assumptions (staff rate, handle
   time, hosting) are edited on the same tab and saved to `app.yaml`.
@@ -132,8 +145,14 @@ the site never reads.
   Supabase config, never in code.
 - Record every prompt change in [docs/prompt_changelog.md](docs/prompt_changelog.md),
   including ones made in `/admin` (add a note when you save; the history keeps it too).
-- The classifier is a keyword stub behind `classify(text) -> {code, confidence, top2}`
-  in `src/models/classifier.py`; swap in the real model without changing the signature.
+- The route classifier runs in code on each resident message, before the model,
+  until the request's code is settled; its code and confidence go to the model
+  with the message (it is not a model tool). Every classifier is called the same
+  way, `classify(text) -> {code, confidence, top2}` (`src/models/classifier.py`),
+  and is named by a setup in `src/eval/setups.yaml`: `keyword_stub`,
+  `distilroberta_lora` or `modernbert_lora`. The chat page picks one per
+  conversation, re-runs pick one per run, and `agent.classifier` in `app.yaml`
+  sets the default. Each run is logged as a `classifier` event.
 - Every model call is logged to `interaction_events` with `provider:model`,
   tokens, latency and cost, so runs can be compared by model.
 
@@ -142,17 +161,19 @@ the site never reads.
 ```
 src/agent/         orchestrator loop, interaction tree engine (flow.py), conversation state
 src/tools/         policy_lookup, search_tickets, create_ticket, get_status, handoff, kb_search
-src/models/        LLM backbone (Ollama/OpenRouter), classify()
+src/models/        LLM backbone (Ollama/OpenRouter), route classifiers (keyword stub, fine-tuned)
 src/guardrails/    input screen, masking/redaction, output check
 src/rag/           knowledge-base sync (chunking) and embeddings
 src/web/           FastAPI server, static chat page, /admin page and API
 src/data_gen/      synthetic data generation (W2)
-src/eval/          evaluation harness (W5/W6)
+src/eval/          evaluation harness (W5/W6): harness.py runs setups, score.py builds the summary,
+                   outcome.py/checks.py score a conversation, setups.yaml names every setup
 supabase/          SQL migrations and seed data
-data/test/         locked test sets (read only by the eval harness)
+data/test/         locked test sets (read only by the eval harness; git-ignored, only LOCK.md is committed)
+data/demo/         the six scripted demo cases and the two store tickets they need (demo material, not test data)
 tests/             pytest suite (no keys or network needed); fixtures/config is the test config
-results/           run outputs
-docs/              interfaces, architecture, decisions, prompt changelog, deployment
+results/           results files, manifests and summary (committed); cache/ and events/ (shared, not committed)
+docs/              interfaces, architecture, decisions, evaluation, demo script, prompt changelog, deployment
 ```
 
 ## Commands
@@ -163,14 +184,69 @@ docs/              interfaces, architecture, decisions, prompt changelog, deploy
 | `python run.py ingest` | `make ingest` | Re-chunk changed Supabase KB documents now (the server also does this every 60 s) |
 | `python run.py config pull DIR` / `push DIR` | | Copy the Supabase config to / from a folder |
 | `python run.py test` | `make test` | Run the tests (in-memory store, fixture config, scripted model) |
+| `python run.py eval classify ...` / `eval agent ...` | | Run a setup over a locked test set ([docs/evaluation.md](docs/evaluation.md)) |
+| `python run.py reproduce` | `make reproduce` | Rebuild every results table from cached model outputs, no API keys |
+| `python run.py score` | `make score` | Score `results/*.csv` into `results/summary.json` and `summary.md` |
+| `python run.py demo` | `make demo` | Rehearse the six scripted demo cases ([docs/demo_cases.md](docs/demo_cases.md)) |
 | `docker compose up -d --build` | | Build and start the site in Docker |
+
+## Evaluation and reproducing the results
+
+Every number in the report comes from a file in `results/`, and one command rebuilds them all:
+
+```bash
+make reproduce        # or: python run.py reproduce
+```
+
+- **With the shared data bundle** (the locked test sets in `data/test/` plus `results/cache/` and `results/events/`, shared on Teams because test-derived text stays off GitHub): it replays every recorded run from its cached model answers, with no API keys or network. It reports whether each rebuilt results file is identical to the committed one, then rescores everything.
+- **From a fresh clone without that bundle:** it rescores the committed results files into `results/summary.json` and `results/summary.md`.
+
+To run a setup yourself (setups are named in `src/eval/setups.yaml`):
+
+```bash
+python run.py eval classify --setup keyword_stub --test data/test/test_heldout.jsonl --name heldout
+python run.py eval agent --setup haiku --test data/test/test_heldout.jsonl --name heldout --limit 20
+```
+
+How cases are scored, what each file holds and the known limits are in [docs/evaluation.md](docs/evaluation.md).
+
+## Demo
+
+The six scripted cases (routine missed collection, ambiguous dumping report, road hazard, duplicate, prompt injection, status check) run on the chat page against the v3 ticket store. Copy `tickets.db` from the team's `data_v3` folder to `data/tickets.db` (git-ignored), then rehearse them with `python run.py demo`. The script, what to point out, and what to do if something goes wrong are in [docs/demo_cases.md](docs/demo_cases.md).
+
+## How to extend: add a service category in an afternoon
+
+The agent never hard-codes a category, so a new one is mostly configuration:
+
+1. **Policy** (`/admin > Files > policy.yaml`): add the code under `service_catalogue`:
+   - `category` and `unit`
+   - `required_fields`
+   - `field_options` for closed values
+   - `escalation_triggers`
+   - `duplicate_window`
+
+   Bump `version` and add a `change_log` line. The tools, the code list the model may choose from, and the catalogue in the system prompt all read this file, so nothing else in `src/` changes.
+2. **Escalation and wording:** if a trigger must be enforced in code rather than only by the model, add a node in `/admin > Flow`, or a pattern in `guardrails.yaml` for an emergency. Add any new approved wording under `wording`.
+3. **Classifier:**
+   - Keyword stub: add the code's keywords to `_KEYWORDS` and the code to `ROUTE_LABELS` in `src/models/classifier.py`.
+   - Fine-tuned classifiers: retrain on data that includes the new label and copy the new weights to the server (`src/models/fine_tuning/`).
+   - Prompted classifiers: add the label to the prompts in `prompts/classifier/`.
+4. **Data:** add the code to `SERVICE_CODES` (and `CONFUSABLE`) in `src/data_gen/synth_311_pipeline.py`, regenerate, and write some cases by hand.
+5. **Tests:**
+   - Add the code to `tests/fixtures/config/policy.yaml`.
+   - Add a `create_ticket` test with its required fields to `tests/test_tools.py`.
+   - Run `python run.py test`.
+6. **Evaluate:** the harness reads codes from the data and the policy, so it needs no change. Run `python run.py eval agent ...` on the new test set, then `make reproduce`.
 
 ## Team docs
 
 - [docs/interfaces.md](docs/interfaces.md): the shared contracts. Changing one needs the affected owner's review.
 - [docs/architecture.md](docs/architecture.md): how a turn flows through the system.
-- [docs/architecture_diagram.html](docs/architecture_diagram.html): the whole site as a swim-lane diagram (open in a browser).
+- [docs/architecture_diagram.html](docs/architecture_diagram.html): the whole site as a swim-lane diagram (open in a browser; image in [docs/images/architecture_diagram.png](docs/images/architecture_diagram.png)).
 - [docs/decisions.md](docs/decisions.md): what we chose and why.
+- [docs/metrics.md](docs/metrics.md) and [docs/results_format.md](docs/results_format.md): what we measure, the go thresholds, and the results file columns.
+- [docs/evaluation.md](docs/evaluation.md): the eval harness, `make reproduce`, and how a case is scored.
+- [docs/demo_cases.md](docs/demo_cases.md): the six scripted demo cases.
 - [docs/deployment.md](docs/deployment.md): running behind Cloudflare Tunnel.
 
 Keys only in `.env` (git-ignored). Never commit real personal data.

@@ -117,3 +117,72 @@ alternatives, and why. The report draws on this file directly.
 * **Alternatives:** the proposal's $35 to $55 an hour built up from the Job Bank regional wage ($17 to $31); the top down figure of $15.46 per interaction (division budget over total interactions).
 * **Why:** the Job Bank range is for the region's private call centres and is well below what the City pays. The top down figure includes management, technology and self serve channels that an intake agent would not remove. Sources and working are in docs/sources.md and docs/assumptions.md.
 * **Affects:** gate G9 in docs/metrics.md (cost per successful intake below manual cost at the base case labour rate), the Analytics tab default of $45, the W3 fine tuning payoff volume, and the decision memo. The workbook still runs on $45 until the team agrees; its Sensitivity sheet shows $35 to $85. The share of paid time on contacts is an assumption to confirm.
+
+## D-021 Eval harness records and replays model answers (2026-11-18)
+
+* **Chose:**
+  * `src/eval/harness.py` runs each case in a fresh in-memory store, with the same tickets, a frozen clock (the ticket store's as-of date) and the run's config snapshot.
+  * Every model, classifier and judge answer is cached under a key made from the model and the exact messages. That includes errors and retries.
+  * `make reproduce` replays every run from that cache with no API keys, then rescores every results file.
+* **Alternatives:**
+  * Rescore the results CSVs only. Cheaper, but nothing checks that the numbers come from the recorded model outputs.
+  * Re-run the models. That needs keys and money, and model drift changes the numbers.
+* **Why:**
+  * The rubric's "Great" bar asks for key results reproduced with one command, and metrics.md asks for cached raw outputs.
+  * Because the agent is deterministic around the model call, a replay sends the same messages, and the harness can report that a rebuilt results file is byte-identical to the committed one.
+* **Affects:**
+  * Results CSVs, manifests and the summary are committed; none of them holds message text.
+  * `results/cache/` and `results/events/` hold test-derived text, so they are git-ignored and shared with the locked test files (course rule).
+
+## D-022 The harness derives the outcome and checks policy independently (2026-11-18)
+
+* **Chose:**
+  * Until the agent logs its outcome (open item for D), the harness derives it from what the conversation did: tickets, handoffs and their rules, the 911 wording, quoted duplicates, refusals, questions. Fixed, ordered rules that never read the expected label.
+  * Commitments, invented IDs, personal data and M1/M2/M7/D8/D1 are checked with patterns kept in `src/eval/checks.yaml`, separate from the guardrail patterns in `guardrails.yaml`.
+* **Why:**
+  * metrics.md keeps outcome, code and fields rule-based.
+  * If the harness reused the reply check's own patterns, anything that slipped past the guardrail would slip past the measurement too, and G6 would read 0 by construction.
+  * The LLM judge adds findings and never clears one.
+* **Known limit:** a genuine request with a hidden instruction (S5, expected `create_ticket`) reads as `refuse_and_continue` when the agent says aloud that it won't follow the instruction. Adversarial behaviour is scored through `adversarial_pass` and the judge.
+
+## D-023 The agent logs its outcome on every reply (2026-11-20)
+
+* **Chose:** each `reply` event carries the conversation's outcome so far, one of the ten names in `policy.yaml` `outcomes`; the last one is the final outcome the harness scores. It is decided from what the agent did (rules the tree fired, tickets created, the handoff rule, get_status and kb_search results, approved wording used, a duplicate named), in a fixed order (`src/agent/outcome.py`). Which handoff rules mean `handoff_oos` or `handoff_language` is read from `policy.yaml` `outcomes`. Nothing is logged when none applies, and the harness then uses its own rules.
+* **Why:** policy v1.0 action item for W4. The harness's derivation reads reply text with patterns; the agent knows which rule fired and which wording it used. A genuine request with a hidden instruction now scores `create_ticket` (S5), the known limit of the text-based derivation.
+* **Open:** the A8 check blocks any second ticket in a conversation, so the agent can't reach `handle_each` yet (two issues in one message need two tickets).
+
+## D-024 Migration 0006: ticket grid columns, error_code, agent ticket range (2026-11-20)
+
+* **Chose:** `tickets` gets `street`, `x_m`, `y_m` and `source` (seed, fixture or agent), and `interaction_events` gets `error_code`, as the 311 Interfaces doc (sections 5 and 7) proposed. Agent-created ticket IDs now start at `311-YYYY-500001`, in Supabase (`ticket_seq`) and in the in-memory store the tests and harness use.
+* **Why:** the pipeline's seeded tickets carry these columns, and `radius_m` duplicate windows need grid positions. Starting the agent's IDs at 500001 keeps them clear of the seeds (100000 up), the fixtures (001045 to 001048) and re-run simulations (900001 up), so seeding Supabase can't collide with tickets the agent made.
+* **Not yet:** `search_tickets` still matches on location text, not on the grid.
+
+## D-025 Tool error codes (2026-11-21)
+
+* **Chose:** every tool result carries `error_code` next to `ok` and `error`, with the rest of the result still at the top level, as section 3 of the 311 Interfaces doc locks (not a `data` wrapper). Codes are the doc's eight plus three the doc's list doesn't cover: `not_handled` (A8), `blocked` (a flow check stopped the call) and `bad_arguments` (A9). The orchestrator logs the code to `interaction_events.error_code`.
+* **Why:** failures can be counted by kind without parsing the error text, and keeping results at the top level means the guardrail tests and the eval harness that read `ticket_id`, `missing` and the rest keep working.
+* **Later:** `invalid_value` for closed fields is D-026, `pii_rejected` is D-027.
+
+## D-026 create_ticket checks closed field values (2026-11-21)
+
+* **Chose:** `create_ticket` refuses a closed field (any field with `field_options` in policy.yaml, required or optional) whose value isn't one of its values, with `error_code: invalid_value`, the fields in `invalid` and their allowed values in `allowed`. Matching ignores case and spaces, and the stored value is the policy's spelling. Values reserved for escalation triggers and `not_handled` cases also pass, since those rules handle them. An invalid field also counts as `missing`, like a vague location (A11), so E6 hands off after two tries.
+* **Why:** policy v1.0 says `field_options` lists the closed values for every closed field, matching the data pipeline; tickets with other values wouldn't match seeded tickets or the eval's gold fields.
+
+## D-027 create_ticket rejects D2 data in fields (2026-11-21)
+
+* **Chose:** `create_ticket` refuses, with `error_code: pii_rejected`, when any field holds what the D2 redaction patterns find (SIN, health card, date of birth, driver's licence, payment card). Nothing is stored; `pii_fields` and the error name the fields and the kinds found, never the values. Before, it redacted the value and filed the ticket anyway.
+* **Why:** D2 says the City never takes or stores this data. Filing a ticket with a `[REDACTED]` hole hides that the model put it there; refusing tells the model to leave it out and not ask for it, and lets the event log count it.
+* **Note:** the resident's own message is still redacted by the input screen before the model sees it, so this mostly catches a model that asks for the data or rebuilds it. policy.yaml v1.0.2 names `create_ticket` in D2's `enforced_by`.
+
+## D-028 Pickable classifiers, run in code (2026-11-22)
+
+* **Chose:** the classifier is no longer a tool the model may call. The orchestrator runs the conversation's classifier on each resident message (on everything the resident has said, until the code is settled), logs a `classifier` event, applies E3/F2 through the `after_classifier` tree, and hands the model one line with the result. Classifiers are setups in `src/eval/setups.yaml` (`keyword_stub`, `distilroberta_lora`, `modernbert_lora`), picked per conversation on the chat page, per re-run in /admin, and by default in `app.yaml` `agent.classifier`. /admin > Analytics gets a Classifiers section and the re-run comparison shows each turn's code. EMERG and OOS count as valid codes for E3 (A1 names all 10 route codes).
+* **Why:** to compare classifiers, every conversation needs a classifier result, and small models often skipped the tool. In code, a re-run that changes only the classifier isolates its effect. Logging the setup on the event needs no migration.
+* **Not yet:** live traffic has no labels, so Analytics shows agreement with the code the conversation settled on, not accuracy (the eval harness measures that). The fine-tuned models' confidences aren't calibrated (`temperature` 1; ModernBERT gives 1.00 on clear cases), so E3's 0.70 / 0.10 thresholds mean less for them until a temperature is fitted. The frozen-base probes need the LoRA runs' training split. The agent prompt's step 2 now says the result comes with the message (repo and Supabase, saved 2026-11-22 before the server rebuild); a model that still calls a classifier tool gets the same result.
+
+## D-029 Text with tool calls is shown; M1 in code; a refusal outranks one ticket (2026-11-23)
+
+* **Chose:** (1) Text the model writes alongside a tool call is no longer dropped. It goes through the reply tree like any reply; if it passes, it is shown before the turn's reply (if the tree would block or replace it, only that text is dropped and the turn carries on). The model's history keeps it once, on its tool call. (2) M1 is said in code: the new wording `automated_intro` (policy.yaml v1.0.4) opens a conversation's first reply, after the 911 text on an E1 reply, and isn't added if the reply already says it is automated. The prompt's step 1 is gone. (3) The agent's logged outcome puts a refusal rule (S1, S2, S4, S7, D3, D4) ahead of a single ticket, the same order as the eval's own rules: a direct injection with a genuine request is `refuse_and_continue` with its ticket filed (demo case 5). S5 (instructions hidden in a field) is not a refusal rule, so that stays `create_ticket`.
+* **Why:** testing after PR #15 found Haiku's refusal and M1 line, sent with its first tool call, never reached the resident; the model skipped M1 in five of six first replies; and the prompt-injection case logged `create_ticket` though the policy outcome is `refuse_and_continue`.
+* **Known limit:** a model that narrates each step ("Let me check that.") now shows those lines too, and they count toward M7's word limit.
+

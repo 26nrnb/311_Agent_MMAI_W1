@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from src.config import app_config
 from src.rag.embeddings import embed
+from src.tools.errors import fail, ok
 from src.tools.store import StoreError, get_store, store_failure
 
 
 def kb_search(query: str, top_k: int | None = None) -> dict:
     if not query or not query.strip():
-        return {"ok": False, "error": "query is required"}
+        return fail("missing_argument", "query is required")
     top_k = top_k or app_config()["retrieval"]["top_k"]
     try:
         vectors = embed([query])
@@ -28,4 +29,4 @@ def kb_search(query: str, top_k: int | None = None) -> dict:
     except StoreError as e:
         return store_failure(e)
     passages = [{"title": r.get("title"), "source": r.get("source"), "text": r["content"]} for r in rows]
-    return {"ok": True, "error": None, "passages": passages, "note": embed_error}
+    return ok(passages=passages, note=embed_error)

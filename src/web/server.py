@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from src.agent.orchestrator import SetupError, handle_turn
 from src.config import ConfigUnavailable, app_config, files
+from src.models import classifier as clf
 from src.models.llm import LLMSelection, list_models
 from src.rag.ingest import start_sync
 from src.tools.store import MemoryStore, get_store
@@ -28,10 +30,19 @@ from src.web import admin
 STATIC = Path(__file__).parent / "static"
 
 
+def _preload_classifier():
+    try:
+        clf.preload()
+    except Exception as e:   # the chat still works; the first message loads it, or reports it
+        print(f"[classifier preload failed] {type(e).__name__}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(_app):
     # Knowledge-base and config edits made in Supabase go live without a redeploy.
     stop = start_sync(app_config()["retrieval"].get("sync_interval_s", 0))
+    # Load the default classifier in the background so the first resident doesn't wait for it.
+    threading.Thread(target=_preload_classifier, daemon=True).start()
     yield
     if stop:
         stop.set()
@@ -47,6 +58,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     provider: str
     model: str
+    classifier: str | None = Field(default=None, max_length=100)   # a setup name; None = the default
 
 
 @lru_cache
@@ -80,7 +92,8 @@ def admin_page():
 def site_config():
     cfg = app_config()
     return {"site": cfg["site"], "providers": cfg["llm"]["providers"],
-            "default_provider": cfg["llm"]["default_provider"], "default_models": cfg["llm"]["default_models"]}
+            "default_provider": cfg["llm"]["default_provider"], "default_models": cfg["llm"]["default_models"],
+            "default_classifier": clf.check(None)}
 
 
 @app.exception_handler(ConfigUnavailable)
@@ -109,11 +122,17 @@ def models(provider: str):
         raise HTTPException(502, f"could not list {provider} models ({type(e).__name__})")
 
 
+@app.get("/api/classifiers")
+def classifiers():
+    """Classifier setups (src/eval/setups.yaml) and whether each is installed on this server."""
+    return {"classifiers": clf.installed(), "default": clf.check(None)}
+
+
 @app.post("/api/chat")
 def chat(req: ChatRequest, x_openrouter_key: str | None = Header(default=None)):
     sel = LLMSelection(provider=req.provider, model=req.model,
                        api_key=x_openrouter_key if req.provider == "openrouter" else None)
     try:
-        return handle_turn(req.interaction_id, req.message, sel)
-    except SetupError as e:
+        return handle_turn(req.interaction_id, req.message, sel, classifier=req.classifier)
+    except (SetupError, clf.ClassifierError) as e:
         raise HTTPException(400, str(e))

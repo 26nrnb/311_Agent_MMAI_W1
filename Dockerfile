@@ -7,8 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY requirements.txt requirements-ml.txt ./
+RUN pip install -r requirements.txt -r requirements-ml.txt
 
 COPY . .
 

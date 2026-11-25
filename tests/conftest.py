@@ -22,6 +22,10 @@ def fresh_store():
     config.reload()
 
 
+# M1: the orchestrator opens a conversation's first reply with this (policy wording automated_intro).
+INTRO = "I'm the City of Gilead's automated 311 assistant. "
+
+
 def tool_call(name, args, call_id=None):
     return {"id": call_id or f"call_{name}", "type": "function",
             "function": {"name": name, "arguments": json.dumps(args)}}

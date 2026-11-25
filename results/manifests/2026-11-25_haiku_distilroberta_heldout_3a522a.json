@@ -1,0 +1,31 @@
+{
+  "run_id": "2026-11-25_haiku_distilroberta_heldout_3a522a",
+  "kind": "agent",
+  "setup": "haiku_distilroberta",
+  "setup_settings": {
+    "provider": "openrouter",
+    "model": "anthropic/claude-haiku-5.5",
+    "classifier": "distilroberta_lora",
+    "key_env": "OPENROUTER_API_KEY"
+  },
+  "test_set": "heldout",
+  "test_file": "data/test/test_heldout.jsonl",
+  "test_set_hash": "3a522a9897b3236903a36f32b92bfd1fc8fe9a96cebfea0a1f5cf5c4b6bfb932",
+  "n_cases": 774,
+  "limit": null,
+  "test_set_lock": "matches LOCK.md (774 cases)",
+  "tickets_path": "data/tickets.db",
+  "created": "2026-11-25",
+  "git_commit": "2fdd229",
+  "harness_version": "2.1",
+  "frozen_clock": "2026-11-11T12:00:00+00:00",
+  "model": "openrouter:anthropic/claude-haiku-5.5",
+  "classifier": "distilroberta_lora",
+  "config_source": "fixture (tests/fixtures/config)",
+  "policy_version": "v1.0.4",
+  "tickets_source": "tickets.db",
+  "n_tickets": 404,
+  "judge": "sonnet_judge",
+  "llm_calls_recorded": 1867,
+  "llm_calls_replayed": 9
+}

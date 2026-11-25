@@ -35,20 +35,44 @@ margin 0.10, field attempts 2, ...) and approved `wording`.
 
 ## Tool functions (D)
 
-Each returns a dict with `ok` (bool) and `error` (str or None).
+Each returns a dict with `ok` (bool), `error` (text for the model, or None)
+and `error_code` (one of the codes below, or None), with the rest of the
+result at the top level (`src/tools/errors.py`):
+
+```
+{"ok": true,  "error": null, "error_code": null, "ticket_id": "311-2026-500001", "code": "SW-BIN", ...}
+{"ok": false, "error": "missing required fields: damage_type (A4)", "error_code": "missing_fields", "missing": ["damage_type"]}
+```
 
 | Function | Returns when ok | Rule |
 |---|---|---|
-| `policy_lookup(code)` | code, category, unit, required_fields, field_options, escalation_triggers, duplicate_window | A2 |
+| `policy_lookup(code)` | catalogue code: code, category, unit, required_fields, field_options, escalation_triggers, duplicate_window, not_handled (cases not to ticket). Route code (EMERG, OOS): code, route, no_ticket, name, outcome, rules, sent_when, look_alikes, other_services (OOS), wording (the approved reply text); `create_ticket` refuses a route | A2, A8 |
 | `search_tickets(location, code=None, days=None)` | tickets: [{ticket_id, code, status, date_opened}] (nothing else, D3) | A3 |
-| `create_ticket(code, fields)` | ticket_id, code, category, unit, location. On missing fields: ok False, `missing: [...]` | A4 |
+| `create_ticket(code, fields)` | ticket_id, code, category, unit, location. On missing fields: ok False, `missing: [...]`. A closed field (`field_options`) must hold one of its values, matched ignoring case and stored as the policy spells it; values reserved for escalation triggers and `not_handled` cases also pass. A route code (EMERG, OOS) or a `not_handled` case whose field values match (a private tree): ok False, `not_handled: <id>`, `outcome` | A4, A8 |
 | `get_status(ticket_id, postal_code)` | ticket_id, code, status, unit, date_opened | A5, D5 |
 | `handoff(rule_id, package)` | ref_id, rule_id. Package: interaction_id, code, confidence, fields, transcript, possible_duplicates, reason (masked on write) | A6 |
 | `kb_search(query, top_k=None)` **proposed** | passages: [{title, source, text}] | C5 |
 
-Infrastructure failures return `ok: False` plus private `_failure: True` /
-`_detail` keys; the orchestrator strips `_` keys before the model sees the
-result, retries once (F1) and then hands off (E9).
+Infrastructure failures return `ok: False`, `error_code: unavailable`, plus
+private `_failure: True` / `_detail` keys; the orchestrator strips `_` keys
+before the model sees the result, retries once (F1) and then hands off (E9).
+
+| error_code | When |
+|---|---|
+| `unknown_code` | Code not in the catalogue or routes, or EMERG/OOS passed to `create_ticket` |
+| `missing_argument` | No location, query, ticket number or postal code |
+| `missing_fields` | A required policy field is empty, or the location is too vague (A11); `missing` lists them |
+| `invalid_value` | A closed field's value isn't in its `field_options` (`create_ticket`: `invalid` names the fields, `allowed` their values, and they count as `missing` for E6), or an unknown handoff `rule_id` |
+| `pii_rejected` | A `create_ticket` field holds a SIN, health card, date of birth, licence or card number (D2, `masking.redact` patterns); nothing is stored, `pii_fields` names the fields, never the values |
+| `not_found` | Ticket number and postal code don't match a ticket (same reply either way, D5) |
+| `policy_unavailable` | policy.yaml couldn't be read (F4) |
+| `unavailable` | Store or service failed, after one retry (F1, E9) |
+| `not_handled` | (added) The catalogue marks the case as not handled by the City (A8) |
+| `blocked` | (added) A flow check stopped the call before it ran, or the request was already handed off |
+| `bad_arguments` | (added) A tool that doesn't exist, or arguments it doesn't take (A9) |
+
+The orchestrator writes the code to `interaction_events.error_code` on the
+`tool:<name>` event (null when the call succeeded).
 
 The model sees these as tools named `classifier`, `policy_lookup`,
 `search_tickets`, `create_ticket`, `get_status`, `handoff`, `kb_search`
@@ -56,21 +80,51 @@ The model sees these as tools named `classifier`, `policy_lookup`,
 
 ## Classifier (C)
 
-`classify(text) -> {code, confidence, top2}`; `top2` is
-`[{code, confidence}, ...]`. Same call for prompted and fine-tuned models.
-`src/models/classifier.py` is a keyword stub until the real model lands.
+`make_classifier(name)(text) -> {code, confidence, top2, setup, model}`;
+`top2` is `[{code, confidence}, ...]`, best first; `code` is one of the 10
+route codes (EMERG and OOS included). Same call for every classifier. The
+setups are the `classifier` section of `src/eval/setups.yaml`:
+
+| Setup | Kind | What |
+|---|---|---|
+| `keyword_stub` | keyword | the stub, `classify(text)` |
+| `distilroberta_lora` | hf | fine-tuned DistilRoBERTa, `src/models/fine_tuning/distilroberta` |
+| `modernbert_lora` | hf | fine-tuned ModernBERT-base, `src/models/fine_tuning/ModernBERT-base` |
+
+`hf` setups load a local Hugging Face sequence classifier (safetensors only)
+on first use and need `requirements-ml.txt`. A setup is installed when its
+weights and those libraries are present; `installed()` / `GET /api/classifiers`
+say which and why not. Settings: `max_length`, `temperature` (softmax
+temperature for the confidences). Planned: `*_probe` setups, the untuned base
+model with a trained head, as the baseline.
+
+The agent runs the conversation's classifier **in code**, not as a model
+tool: on each resident message, on everything the resident has said so far
+(D7: their text only), until the code is settled (a sure result, a policy
+lookup, a ticket or a handoff); a status check (A12) isn't classified. The
+result is logged (`classifier` event), the `after_classifier` tree applies
+E3/F2, and the model gets one line with the message, e.g.
+`[Classifier: SW-BIN 0.97; next AN-INJ 0.01.]`. A model that still calls a
+`classifier` tool gets the same result back. The default is `app.yaml`
+`agent.classifier`; if it isn't installed on a server, the keyword stub is used.
 
 ## Event log (D)
 
 Supabase table `interaction_events`:
 
-`event_id, interaction_id, step, model, tokens_in, tokens_out, cost_usd, latency_ms, rule_id, outcome, text (masked)` (+ `created_at`)
+`event_id, interaction_id, step, model, tokens_in, tokens_out, cost_usd, latency_ms, rule_id, outcome, text (masked)` (+ `created_at`, and `error_code` from migration 0006: the tool's error code on `tool:<name>` events, null otherwise)
 
-`step` values written today: `input_screen`, `model`, `tool:<name>`,
-`flow` (one per tree node visited), `reply` (the text the resident was
-shown). For `flow` the text is JSON `{hook, node, title, rule, check |
+`step` values written today: `input_screen`, `classifier`, `model`,
+`tool:<name>`, `flow` (one per tree node visited), `reply` (the text the
+resident was shown), `rerun` (first event of a re-run). For `classifier`,
+`model` is the setup name, `latency_ms` its time, `outcome` sure / unsure /
+error, `rule_id` E3 when not sure, and the text JSON `{code, confidence,
+top2, why}`. For `flow` the text is JSON `{hook, node, title, rule, check |
 action, observed, branch, next, fired, says?}`; `rule_id` is set only when
 the node fired (a decision's yes branch, or an action).
+For `reply`, `outcome` is the conversation's outcome so far, one of the
+ten names in `policy.yaml` `outcomes` (blank when none applies yet); the
+last reply's value is the final outcome (`src/agent/outcome.py`).
 For `tool:<name>` the text is JSON `{args, error, result}`; for
 `tool:handoff` it is `{reason, result}`. `model` is `provider:model_id`. `cost_usd` is
 OpenRouter's reported cost, 0 for Ollama.
@@ -78,7 +132,13 @@ OpenRouter's reported cost, 0 for Ollama.
 ## Results file (F)
 
 `results/<run_id>.csv`, one row per test case per setup, plus
-`results/summary.json`.
+`results/summary.json`. Columns: `docs/results_format.md` (F). Written by
+the eval harness (`src/eval/harness.py`, E), which also writes
+`results/manifests/<run_id>.json` (what was run) and keeps the raw model
+answers in `results/cache/<run_id>/` for `make reproduce`; see
+`docs/evaluation.md`. The harness reads both interaction-record shapes
+(`id`/`service_code` from the pipeline and `interaction_id`/`expected_code`
+above).
 
 ## LLM backbone (proposed)
 
@@ -104,9 +164,10 @@ then E9) from setup problems (bad key, unknown model; shown to the user).
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
-| GET | `/api/config` | | site text, providers, default models |
+| GET | `/api/config` | | site text, providers, default models, default classifier |
+| GET | `/api/classifiers` | | `{classifiers: [{name, label, kind, available, reason, loaded}], default}` |
 | GET | `/api/models` | `?provider=ollama\|openrouter` | models with tool support |
-| POST | `/api/chat` | `{interaction_id?, message, provider, model}` + header `X-OpenRouter-Key` (OpenRouter only) | `{interaction_id, reply, rule_id}` |
+| POST | `/api/chat` | `{interaction_id?, message, provider, model, classifier?}` (400 if the classifier isn't installed; none = keep the conversation's, or the default) + header `X-OpenRouter-Key` (OpenRouter only) | `{interaction_id, reply, rule_id}` |
 | GET | `/api/health` | | `{ok, store: supabase\|memory, config: loaded\|unavailable}` |
 
 ## Admin API and config edits (proposed)
@@ -129,10 +190,10 @@ both off). Everything returned about conversations is masked (D6).
 | GET | `/api/admin/handoffs` | `?status=&rule_id=&q=&limit=` | handoffs (masked), counts by status |
 | GET | `/api/admin/handoffs/{ref_id}` | | handoff with transcript, status history |
 | POST | `/api/admin/handoffs/{ref_id}/updates` | `{status?, note?, author?}` | change status (`pending`, `in_review`, `resolved`) and/or add a note |
-| GET | `/api/admin/analytics` | `?bucket=hour\|day\|month&periods=&tz=` | per-period and total requests, outcomes, tokens, latency (p50/p95), costs; by model, handoff rule and code; the cost assumptions |
-| POST | `/api/admin/interactions/{id}/rerun` | `{provider, model}`; header `X-OpenRouter-Key` for OpenRouter | start a re-run (409 if two are running or there is nothing to replay); returns the job |
+| GET | `/api/admin/analytics` | `?bucket=hour\|day\|month&periods=&tz=` | per-period and total requests, outcomes, tokens, latency (p50/p95), costs; by model, handoff rule and code; `classifiers`: per classifier setup, messages, unsure rate, mean confidence and bands, time p50/p95, errors, and how often its code matched the conversation's final code; the cost assumptions |
+| POST | `/api/admin/interactions/{id}/rerun` | `{provider, model, classifier?}` (none = the original's); header `X-OpenRouter-Key` for OpenRouter | start a re-run (409 if two are running or there is nothing to replay); returns the job |
 | GET | `/api/admin/reruns/jobs/{job_id}` | | job: `status` running/done/failed, `done` of `turns`, `rerun_id`, `error` |
-| GET | `/api/admin/reruns` | `?limit=` | originals with their re-runs, each run split into turns (tools, rules, reply, time, tokens), decisions compared with the original; pooled by model; running jobs |
+| GET | `/api/admin/reruns` | `?limit=` | originals with their re-runs, each run split into turns (tools, rules, reply, time, tokens), decisions and classifier codes compared with the original; pooled by model (`by_model`) and by classifier (`by_classifier`); running jobs |
 | PUT | `/api/admin/costs` | `{costs, author?, note?}` | save cost assumptions into the `costs` block of `app.yaml` (checked; 422 with `errors`) |
 | GET / POST | `/api/admin/kb` | POST `{title, content, source?, active?}` | documents; create |
 | PUT / DELETE | `/api/admin/kb/{id}` | PUT as POST | update; delete |
@@ -153,6 +214,19 @@ node has `title`, optional `description`, `rule`, `enabled`, and either
 `check` + `params` + `yes`/`no`, or `action` + `params` + `next`. Hooks,
 checks and actions are listed by `GET /api/admin/flow` and documented in
 `src/agent/flow.py` and docs/architecture.md.
+
+## Ticket store (D, A)
+
+Supabase `tickets`: `ticket_id, code, unit, status (open|in_progress|closed),
+location, location_norm (generated), street, postal_code, x_m, y_m, lat, lng,
+fields, contact, opened_at, interaction_id, source (seed|fixture|agent)`.
+`street`, `x_m`, `y_m` and `source` come from migration 0006 and match the
+data pipeline's ticket columns (pipeline `address` = `location`,
+`fields_json` = `fields`, `created_at` = `opened_at`). Agent-created tickets
+fill `street` and `source = agent`; `x_m`/`y_m` stay null (the agent doesn't
+place tickets on the grid). Ticket IDs: seeds `311-YYYY-100000` up, fixtures
+`001045` to `001048`, agent-created `500001` up (`ticket_seq`;
+`FIRST_AGENT_TICKET` in `src/tools/store.py`), re-run simulations `900001` up.
 
 ## Ticket and handoff tracking (proposed)
 

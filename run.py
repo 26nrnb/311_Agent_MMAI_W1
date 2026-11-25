@@ -4,6 +4,10 @@
     python run.py ingest     re-chunk changed Supabase KB documents now (--import DIR to bulk upload)
     python run.py config     pull/push the config files in Supabase (see `python run.py config`)
     python run.py test       run the test suite
+    python run.py eval       run the eval harness (see `python run.py eval --help`)
+    python run.py score      score results files into results/summary.json and summary.md
+    python run.py reproduce  replay every recorded run and rebuild every results table (make reproduce)
+    python run.py demo       rehearse the six scripted demo cases (docs/demo_cases.md)
 """
 from __future__ import annotations
 
@@ -59,7 +63,28 @@ def test(args):
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", *args]))
 
 
-TARGETS = {"serve": serve, "ingest": ingest, "config": config, "test": test}
+def eval_(args):
+    from src.eval.harness import main
+    sys.exit(main(args))
+
+
+def score(args):
+    from src.eval.score import main
+    sys.exit(main(args))
+
+
+def reproduce(args):
+    from src.eval.harness import reproduce as run_reproduce
+    sys.exit(run_reproduce())
+
+
+def demo(args):
+    from src.eval.demo import main
+    sys.exit(main(args))
+
+
+TARGETS = {"serve": serve, "ingest": ingest, "config": config, "test": test,
+           "eval": eval_, "score": score, "reproduce": reproduce, "demo": demo}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in TARGETS:

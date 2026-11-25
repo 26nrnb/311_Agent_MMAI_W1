@@ -12,3 +12,5 @@ logs
 results
 data/test
 *.docx
+# Fine-tuned classifier weights: mounted as a volume (docker-compose.yml), not copied in
+src/models/fine_tuning

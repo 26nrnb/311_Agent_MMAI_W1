@@ -8,12 +8,17 @@ from __future__ import annotations
 
 from src.config import policy
 from src.guardrails.masking import mask_obj
+from src.tools.errors import fail, ok
 from src.tools.store import StoreError, get_store, store_failure
 
 
 def handoff(rule_id: str, package: dict | None = None) -> dict:
-    if rule_id not in policy()["rules"]:
-        return {"ok": False, "error": f"unknown rule_id {rule_id!r}"}
+    try:
+        rules = policy()["rules"]
+    except Exception as e:   # F4
+        return fail("policy_unavailable", f"policy unavailable: {type(e).__name__} (F4)")
+    if rule_id not in rules:
+        return fail("invalid_value", f"unknown rule_id {rule_id!r}")
     package = package or {}
     row = {
         "rule_id": rule_id,
@@ -29,4 +34,4 @@ def handoff(rule_id: str, package: dict | None = None) -> dict:
         saved = get_store().create_handoff(row)
     except StoreError as e:
         return store_failure(e)
-    return {"ok": True, "error": None, "ref_id": saved["ref_id"], "rule_id": rule_id}
+    return ok(ref_id=saved["ref_id"], rule_id=rule_id)

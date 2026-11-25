@@ -308,8 +308,18 @@
 
     // ---------- re-run this conversation on another model ----------
     // The OpenRouter key lives only in this variable for as long as the page is open.
-    const rerunState = { open: false, provider: null, model: "", key: "", job: null, models: {}, error: null };
+    const rerunState = { open: false, provider: null, model: "", key: "", job: null, models: {}, error: null,
+      classifier: "", classifiers: null };
     let rerunTimer = null;
+
+    async function loadClassifiers() {
+      if (rerunState.classifiers) return;
+      rerunState.classifiers = [];
+      try {
+        rerunState.classifiers = (await fetch("/api/classifiers").then((r) => r.json())).classifiers || [];
+      } catch { /* "same as the original" still works */ }
+      if (rerunState.open && currentTab === "interactions") render();
+    }
 
     async function loadModels(provider) {
       if (rerunState.models[provider]) return;
@@ -339,6 +349,7 @@
       const st = rerunState;
       if (!st.provider) st.provider = cfg.default_provider || providers[0];
       loadModels(st.provider);
+      loadClassifiers();
       const job = st.job && st.job.original === original ? st.job : null;
       const listId = `rerun-models-${st.provider}`;
       const provider = h("select", { id: "rerun-provider", "aria-label": "Provider", onchange: (e) => { st.provider = e.target.value; st.model = ""; render(); } },
@@ -347,6 +358,10 @@
         id: "rerun-model", list: listId, value: st.model, placeholder: (cfg.default_models || {})[st.provider] || "model id",
         "aria-label": "Model", oninput: (e) => { st.model = e.target.value.trim(); },
       });
+      const classifier = h("select", { id: "rerun-classifier", "aria-label": "Classifier", onchange: (e) => { st.classifier = e.target.value; } },
+        h("option", { value: "", selected: !st.classifier }, "Classifier: same as the original"),
+        (st.classifiers || []).map((c) => h("option", { value: c.name, selected: c.name === st.classifier, disabled: !c.available, title: c.reason || "" },
+          `Classifier: ${c.label}${c.available ? "" : " (not installed)"}`)));
       const key = st.provider === "openrouter" ? h("input", {
         id: "rerun-key", type: "password", value: st.key, placeholder: "OpenRouter key (kept in this page only)",
         autocomplete: "off", "aria-label": "OpenRouter key", oninput: (e) => { st.key = e.target.value.trim(); },
@@ -360,7 +375,7 @@
           const headers = st.provider === "openrouter" && st.key ? { "X-OpenRouter-Key": st.key } : {};
           try {
             st.job = await api(`/interactions/${encodeURIComponent(original)}/rerun`, {
-              method: "POST", headers, body: JSON.stringify({ provider: st.provider, model: chosen }),
+              method: "POST", headers, body: JSON.stringify({ provider: st.provider, model: chosen, classifier: st.classifier || null }),
             });
             pollJob();
           } catch (e) { st.error = e.message; }
@@ -369,20 +384,24 @@
       }, running ? "Re-running…" : "Re-run");
       let status = null;
       if (st.error) status = h("p", { class: "hint error-text" }, st.error);
-      else if (job && job.status === "running") status = h("p", { class: "hint" }, `Re-running on ${job.model}: turn ${job.done + 1} of ${job.turns}…`);
-      else if (job && job.status === "failed") status = h("p", { class: "hint error-text" }, `Re-run on ${job.model} stopped after ${job.done} of ${job.turns} turns: ${job.error}`);
+      else if (job && job.status === "running") status = h("p", { class: "hint" }, `Re-running on ${job.model} with ${job.classifier}: turn ${job.done + 1} of ${job.turns}…`);
+      else if (job && job.status === "failed") status = h("p", { class: "hint error-text" }, `Re-run on ${job.model} with ${job.classifier} stopped after ${job.done} of ${job.turns} turns: ${job.error}`);
       else if (job && job.status === "done") {
         status = h("div", { class: "ed-actions" },
-          h("span", { class: "hint" }, `Done: ${job.turns} turn${job.turns === 1 ? "" : "s"} on ${job.model}.`),
+          h("span", { class: "hint" }, `Done: ${job.turns} turn${job.turns === 1 ? "" : "s"} on ${job.model} with ${job.classifier}.`),
           h("button", { class: "btn small", onclick: () => analytics.openCompare(original) }, "Compare in Analytics"),
           h("button", { class: "btn small", onclick: () => { $("follow").checked = false; select(job.rerun_id); } }, "Open the re-run"));
       }
       return h("div", { class: "rerun-panel" },
-        h("div", { class: "ed-actions" }, provider, model, key, go,
+        h("div", { class: "ed-actions" }, provider, model, classifier, key, go,
           h("button", { class: "btn small", onclick: () => { st.open = false; render(); } }, "Close")),
         h("datalist", { id: listId }, (st.models[st.provider] || []).map((m) => h("option", { value: m.id }, m.name))),
-        h("p", { class: "hint" }, "Replays the resident's messages on the chosen model, as logged (masked), with stand-ins for the masked details. Tickets and handoffs are simulated, never written. For a like-for-like comparison, re-run on the original model too."),
+        h("p", { class: "hint" }, "Replays the resident's messages on the chosen model and classifier, as logged (masked), with stand-ins for the masked details. Tickets and handoffs are simulated, never written. Change one of the two to see its effect; for a like-for-like baseline, re-run with the original's too."),
         status);
+    }
+
+    function rerunClassifier(marker) {
+      try { return JSON.parse(marker.text).classifier || null; } catch { return null; }
     }
 
     function render() {
@@ -403,10 +422,10 @@
         h("span", { class: "meta" }, models.join(", ")),
         h("span", { class: "spacer" }),
         all.some((e) => e.step === "input_screen")
-          ? h("button", { class: "btn small", onclick: () => { rerunState.open = !rerunState.open; render(); } }, "Re-run with another model")
+          ? h("button", { class: "btn small", onclick: () => { rerunState.open = !rerunState.open; render(); } }, "Re-run with another model or classifier")
           : null);
       const banner = rerunOf ? h("div", { class: "rerun-banner" },
-        h("span", {}, `Re-run on ${marker.model} of an earlier conversation. Tickets and handoffs here were simulated.`),
+        h("span", {}, `Re-run on ${marker.model}${rerunClassifier(marker) ? ` with ${rerunClassifier(marker)}` : ""} of an earlier conversation. Tickets and handoffs here were simulated.`),
         h("button", { class: "btn small", onclick: () => select(rerunOf) }, "Open the original"),
         h("button", { class: "btn small", onclick: () => analytics.openCompare(rerunOf) }, "Compare in Analytics")) : null;
 
@@ -498,6 +517,7 @@
       switch (e.step) {
         case "model": return e.outcome === "tool_calls" ? "decided to call tools" : e.outcome === "error" ? (e.text || "error") : "wrote a reply";
         case "tool:classifier": return res.code ? `${res.code} at ${Math.round((res.confidence || 0) * 100)}%` : d.error || "no code";
+        case "classifier": return (d.code ? `${d.code} at ${Math.round((d.confidence || 0) * 100)}%` : "no code") + (d.why ? ` · ${d.why}` : "");
         case "tool:policy_lookup": return res.code ? `${res.code} → ${res.unit}; needs ${(res.required_fields || []).join(", ")}` : d.error || "";
         case "tool:search_tickets": return res.tickets ? `${res.tickets.length} open ticket(s) nearby` : d.error || "";
         case "tool:create_ticket": return res.ticket_id ? `created ${res.ticket_id}` : res.missing ? `missing: ${res.missing.join(", ")}` : d.error || e.text || "";
@@ -510,7 +530,7 @@
 
     function eventCard(e, i) {
       const cls = cursor == null ? "" : i === cursor ? "current" : i > cursor ? "future" : "";
-      if (e.step === "rerun") return h("div", { class: `ev note ${cls}`, "data-i": i }, `Re-run started on ${e.model}`);
+      if (e.step === "rerun") return h("div", { class: `ev note ${cls}`, "data-i": i }, `Re-run started on ${e.model}${rerunClassifier(e) ? ` with ${rerunClassifier(e)}` : ""}`);
       const id = e.event_id || String(i);
       const pick = () => { cursor = i; render(); };
 
@@ -524,14 +544,14 @@
           h("div", { class: "bubble" }, e.text || ""));
       }
 
-      const outcomeClass = e.outcome === "ok" || e.outcome === "reply" || e.outcome === "tool_calls" ? "ok"
+      const outcomeClass = e.outcome === "ok" || e.outcome === "reply" || e.outcome === "tool_calls" || e.outcome === "sure" ? "ok"
         : e.outcome === "error" || e.outcome === "blocked" ? "err" : "warn";
       const card = h("div", { class: `ev ${cls} ${open.has(id) ? "open" : ""}`, "data-i": i },
         h("div", {
           class: "ev-head",
           onclick: () => { open.has(id) ? open.delete(id) : open.add(id); card.classList.toggle("open"); if (cursor != null) pick(); },
         },
-        h("span", { class: "ev-stage" }, e.step === "model" ? "Model" : "Tool"),
+        h("span", { class: "ev-stage" }, e.step === "model" ? "Model" : e.step === "classifier" ? "Classifier" : "Tool"),
         h("span", { class: "ev-step mono" }, e.step.replace("tool:", "")),
         e.outcome ? h("span", { class: `chip ${outcomeClass}` }, e.outcome) : null,
         e.rule_id ? ruleChip(e.rule_id) : null,
@@ -540,7 +560,7 @@
           [e.latency_ms != null ? `${e.latency_ms} ms` : null, e.tokens_in || e.tokens_out ? `${e.tokens_in}→${e.tokens_out} tok` : null]
             .filter(Boolean).join(" · "))),
         h("div", { class: "ev-body" },
-          e.model ? h("p", { class: "hint" }, `Model: ${e.model}`) : null,
+          e.model ? h("p", { class: "hint" }, `${e.step === "classifier" ? "Classifier" : "Model"}: ${e.model}`) : null,
           h("pre", {}, e.data ? JSON.stringify(e.data, null, 2) : e.text || "(nothing logged)")));
       return card;
     }
@@ -1577,7 +1597,7 @@
         h("p", { class: "hint" }, "For a fair comparison, look at medians over 20 or more replies per model on similar requests. Ollama runs on the team server's GPU; its first call after a pause includes loading the model."));
     }
 
-    // ---------- model re-runs: the same conversation on different models, side by side ----------
+    // ---------- re-runs: the same conversation on different models or classifiers, side by side ----------
     const OUTCOME_LABEL = { ticket: "Filed a ticket", handoff: "Handed to staff", emergency: "Sent to 911", answered: "Answered" };
     const outcomeChip = (r) => h("span", { class: `chip ${r.outcome === "ticket" ? "ok" : r.outcome === "answered" ? "" : "warn"}` },
       OUTCOME_LABEL[r.outcome] || r.outcome, r.handoff_rule ? ` (${r.handoff_rule})` : "");
@@ -1596,6 +1616,8 @@
         row("Cost", (r) => h("td", {}, money(r.cost, "USD"))),
         row("Same decisions", (r) => h("td", { class: differs(r, r.same_turns === r.turns.length) },
           r.rerun ? `${r.same_turns} of ${r.turns.length} turns` : "baseline")),
+        row("Same classifier code", (r) => h("td", { class: differs(r, r.same_codes === r.classified_turns) },
+          !r.rerun ? "baseline" : r.classified_turns ? `${r.same_codes} of ${r.classified_turns} classified turns` : "–")),
       ];
       for (let i = 0; i < turns; i++) {
         const message = (runs.find((r) => r.turns[i]) || original).turns[i].message;
@@ -1603,9 +1625,13 @@
         body.push(row("", (r) => {
           const t = r.turns[i];
           if (!t) return h("td", { class: "hint" }, "not reached");
-          const notes = r.rerun ? [!t.same_tools ? "different tools" : null, !t.same_rules ? "different rules" : null].filter(Boolean) : [];
+          const notes = r.rerun ? [!t.same_tools ? "different tools" : null, !t.same_rules ? "different rules" : null,
+            t.same_code === false ? "different code" : null].filter(Boolean) : [];
+          const c = t.classifier;
           return h("td", { class: differs(r, t.same_tools && t.same_rules) },
             h("div", { class: "cmp-meta" }, `${secs(t.reply_ms)} · ${num(t.calls)} call${t.calls === 1 ? "" : "s"} · ${num(t.tokens_in + t.tokens_out)} tokens`),
+            c ? h("div", { class: "cmp-chips" }, h("span", { class: `chip ${c.outcome === "sure" ? "ok" : "warn"}`, title: `${c.setup}: ${c.outcome}, ${secs(c.ms)}` },
+              `${c.code || "no code"}${c.confidence == null ? "" : ` ${Number(c.confidence).toFixed(2)}`}${c.outcome === "sure" ? "" : ` (${c.outcome})`}`)) : null,
             h("div", { class: "cmp-chips" }, t.tools.length
               ? t.tools.map((x) => h("span", { class: `chip ${x.outcome === "ok" ? "" : "err"}`, title: x.outcome || "" }, x.name, x.outcome && x.outcome !== "ok" ? ` (${x.outcome})` : ""))
               : h("span", { class: "hint" }, "no tools")),
@@ -1619,21 +1645,45 @@
           runs.map((r) => h("th", { scope: "col" },
             h("div", { class: "cmp-kind" }, r.rerun ? "Re-run" : "Original"),
             h("div", { class: "mono cmp-model" }, r.model),
+            r.classifier ? h("div", { class: "mono hint" }, r.classifier) : null,
             h("div", { class: "hint" }, ago(r.started_at), " · ",
               h("button", { class: "linkish", onclick: () => interactions.open(r.interaction_id) }, "open")))))),
         h("tbody", {}, body)));
     }
 
+    function classifiersCard() {
+      const rows = data.classifiers || [];
+      const head = h("div", { class: "card-head" }, h("h3", {}, "Classifiers"),
+        h("span", { class: "hint" }, "Live conversations in this period, by the classifier they used. Re-runs are compared below."));
+      if (!rows.length) {
+        return h("section", { class: "card", id: "an-classifiers" }, head,
+          h("p", { class: "hint" }, "No classified messages in this period. The classifier runs on each resident message until the service code is settled."));
+      }
+      const bands = (m) => h("div", { class: "band-bar", role: "img",
+        "aria-label": m.bands.map((b) => `${b.label}: ${pct(b.share)}`).join(", ") },
+        m.bands.map((b, i) => (b.share ? h("span", { style: `width:${(b.share * 100).toFixed(1)}%;background:var(--band-${i})`, title: `${b.label}: ${pct(b.share)}` }) : null)));
+      return h("section", { class: "card", id: "an-classifiers" }, head,
+        simpleTable(["Classifier", "Messages", "Conversations", "Unsure (E3)", "Agrees with final code", "Mean confidence", "Confidence", "Median time", "p95 time", "Errors"],
+          rows.map((m) => [h("span", { class: "mono" }, m.classifier), num(m.classifications), num(m.conversations), pct(m.unsure_rate),
+            m.with_final ? `${pct(m.agree_rate)} of ${num(m.with_final)}` : "–",
+            m.mean_confidence == null ? "–" : m.mean_confidence.toFixed(2), bands(m), secs(m.p50_ms), secs(m.p95_ms), num(m.errors)]), ""),
+        h("div", { class: "legend band-legend" }, h("span", { class: "hint" }, "Confidence:"), (rows[0].bands || []).map((b, i) =>
+          h("span", { class: "legend-item" }, h("span", { class: "swatch", style: `background:var(--band-${i})` }), b.label))),
+        h("p", { class: "hint" }, "Unsure: below the E3 confidence threshold, or the top two codes too close, so the agent asks a clarifying question. "
+          + "Agrees with final code: its last code matched the conversation's ticket code (or the last code looked up). "
+          + "That's the agent going along with it, not proof it was right; accuracy needs labelled cases (the eval harness)."));
+    }
+
     function rerunsCard() {
       const rr = data.reruns;
-      const head = h("div", { class: "card-head" }, h("h3", {}, "Model re-runs"),
-        h("span", { class: "hint" }, "Conversations replayed on another model. Not counted in the figures above."));
+      const head = h("div", { class: "card-head" }, h("h3", {}, "Re-runs"),
+        h("span", { class: "hint" }, "Conversations replayed on another model or classifier. Not counted in the figures above."));
       if (!rr) return h("section", { class: "card", id: "an-reruns" }, head, h("p", { class: "hint" }, "Couldn't load the re-runs."));
       const jobs = rr.jobs.length ? h("p", { class: "hint live-note" },
         rr.jobs.map((j) => `Re-running on ${j.model}: turn ${Math.min(j.done + 1, j.turns)} of ${j.turns}`).join(" · ")) : null;
       if (!rr.groups.length) {
         return h("section", { class: "card", id: "an-reruns" }, head, jobs,
-          h("p", { class: "hint" }, "No re-runs yet. Open a conversation in Interactions and choose Re-run with another model."));
+          h("p", { class: "hint" }, "No re-runs yet. Open a conversation in Interactions and choose Re-run with another model or classifier."));
       }
       const group = rr.groups.find((g) => g.original === view.group) || rr.groups[0];
       const picker = h("select", { id: "an-rerun-group", "aria-label": "Conversation to compare", onchange: (e) => { view.group = e.target.value; render(); } },
@@ -1645,6 +1695,13 @@
           rr.by_model.map((m) => [h("span", { class: "mono" }, m.model), num(m.runs), num(m.reruns), secs(m.reply_p50_ms), secs(m.reply_p95_ms),
             m.tokens_per_reply == null ? "–" : num(m.tokens_per_reply), money(m.cost_per_run, "USD"), pct(m.same_turn_rate), pct(m.same_outcome_rate)]), ""),
         h("p", { class: "hint" }, "Same decisions: turns where a re-run called the same tools in the same order and fired the same rules as its original."),
+        (rr.by_classifier || []).length ? [
+          h("h4", { class: "sub-h" }, "By classifier, across every compared conversation"),
+          simpleTable(["Classifier", "Runs", "Re-runs", "Turns classified", "Unsure (E3)", "Mean confidence", "Median time", "Same code", "Same outcome"],
+            rr.by_classifier.map((m) => [h("span", { class: "mono" }, m.classifier), num(m.runs), num(m.reruns), num(m.classified), pct(m.unsure_rate),
+              m.mean_confidence == null ? "–" : m.mean_confidence.toFixed(2), secs(m.p50_ms), pct(m.same_code_rate), pct(m.same_outcome_rate)]), ""),
+          h("p", { class: "hint" }, "Same code: classified turns where a re-run's classifier gave the code the original's did."),
+        ] : null,
         h("div", { class: "compare-head" }, h("h4", { class: "sub-h" }, "Side by side"), picker),
         compareTable(group));
     }
@@ -1738,7 +1795,7 @@
       if (!data.totals.requests && !data.models.length) {
         fill($("an-body"), tiles(), h("div", { class: "empty-state" }, "No conversations in this period yet. Try a longer range, or chat on the site to see it here."), rerunsCard());
       } else {
-        fill($("an-body"), tiles(), h("div", { class: "an-charts" }, requestsCard(), costCard()), speedCard(), rerunsCard(), breakdown());
+        fill($("an-body"), tiles(), h("div", { class: "an-charts" }, requestsCard(), costCard()), speedCard(), classifiersCard(), rerunsCard(), breakdown());
       }
       if (scrollToReruns && $("an-reruns")) {
         scrollToReruns = false;

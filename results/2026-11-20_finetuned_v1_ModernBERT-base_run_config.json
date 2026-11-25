@@ -1,0 +1,10 @@
+{
+  "setup": "finetuned_v1",
+  "model_id": "answerdotai/ModernBERT-base",
+  "seed": 42,
+  "train_rows": 1916,
+  "val_rows": 343,
+  "val_accuracy": 0.8892,
+  "val_macro_f1": 0.8622,
+  "e3_trigger_rate": 0.1283
+}

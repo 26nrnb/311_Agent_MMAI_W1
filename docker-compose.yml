@@ -25,5 +25,10 @@ services:
       # 127.0.0.1 = reachable only from this machine (cloudflared runs here).
       # Set PUBLISH_ADDRESS=0.0.0.0 in .env to also reach it from the LAN.
       - "${PUBLISH_ADDRESS:-127.0.0.1}:8311:8311"
-    # No volumes: policy, prompts, guardrails, the interaction tree and the
-    # knowledge base all live in Supabase and are read live (edit at /admin).
+    # Policy, prompts, guardrails, the interaction tree and the knowledge base
+    # all live in Supabase and are read live (edit at /admin). The one volume is
+    # the fine-tuned classifier weights: gitignored and too big for the image, so
+    # copy them to src/models/fine_tuning on the server by hand. If the folder is
+    # empty, those classifiers show as not installed and the keyword stub is used.
+    volumes:
+      - ./src/models/fine_tuning:/app/src/models/fine_tuning:ro

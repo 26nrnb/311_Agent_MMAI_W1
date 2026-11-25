@@ -32,6 +32,7 @@ from src.agent import flow, rerun
 from src.agent.orchestrator import render_system_prompt
 from src.config import EDITABLE, app_config, env, files, guardrails_config, policy, reload
 from src.guardrails.masking import mask_obj
+from src.models import classifier as clf
 from src.models.llm import LLMError, LLMSelection
 from src.rag.ingest import chunk_stale
 from src.tools.store import StoreError, get_store
@@ -196,6 +197,10 @@ def check_config(path: str, content: str) -> list[str]:
         errors.append(f"app.yaml: llm.providers can only be ollama and openrouter, not {', '.join(sorted(unknown))}")
     if "costs" in app:
         errors += stats.check_costs(app["costs"])
+    default_clf = (app.get("agent") or {}).get("classifier")
+    if default_clf and default_clf not in clf.setups():   # installed or not: a server without the weights falls back
+        errors.append(f"app.yaml: agent.classifier {default_clf!r} isn't a classifier setup in src/eval/setups.yaml "
+                      f"(known: {', '.join(clf.setups())})")
     if not errors:
         errors += [f"flow.yaml: {e}" for e in flow.validate(parsed["flow.yaml"], pol, guards)]
 
@@ -390,6 +395,7 @@ def _update(kind: str, ref: str, body: StatusUpdate, statuses: list[str]):
 class RerunRequest(BaseModel):
     provider: str
     model: str = Field(min_length=1, max_length=200)
+    classifier: str | None = Field(default=None, max_length=100)   # None = the one the original used
 
 
 @router.post("/interactions/{interaction_id}/rerun")
@@ -398,8 +404,8 @@ def start_rerun(interaction_id: str, body: RerunRequest, x_openrouter_key: str |
     sel = LLMSelection(provider=body.provider, model=body.model,
                        api_key=x_openrouter_key if body.provider == "openrouter" else None)
     try:
-        job = rerun.start(interaction_id, sel)
-    except LLMError as e:
+        job = rerun.start(interaction_id, sel, body.classifier)
+    except (LLMError, clf.ClassifierError) as e:
         raise HTTPException(400, str(e))
     except rerun.RerunError as e:
         raise HTTPException(409, str(e))
@@ -435,7 +441,7 @@ def reruns(limit: int = 20):
         runs = [stats.compare(original, stats.run_detail(r, by_id[r])) for r in reversed(rs) if r in by_id]
         out.append({"original": of, "first_message": original["turns"][0]["message"] if original["turns"] else None,
                     "last_run_at": runs[-1]["started_at"] if runs else None, "runs": [original, *runs]})
-    return {"groups": out, "by_model": stats.by_model(out),
+    return {"groups": out, "by_model": stats.by_model(out), "by_classifier": stats.by_classifier(out),
             "jobs": [j.public() for j in rerun._JOBS.values() if j.status == "running"]}
 
 
@@ -461,6 +467,8 @@ def analytics(bucket: str = "day", periods: int | None = None, tz: str = "UTC"):
     tickets = _store_call(store.usage_tickets, edges[0], edges[-1])
     costs = stats.cost_settings()
     out = stats.summarize(events, tickets, bucket, edges, now, costs)
+    out["classifiers"] = stats.classifier_stats(_store_call(store.classifier_events, edges[0], edges[-1]),
+                                                stats.rerun_ids(events))
     pol = policy()
     for r in out["handoff_rules"]:
         rule = (pol.get("rules") or {}).get(r["rule_id"])

@@ -1,8 +1,11 @@
-"""Re-run a logged conversation on another model (owner: E; for model comparisons, W6).
+"""Re-run a logged conversation on another model or classifier (owner: E; for comparisons, W6).
 
 The resident's messages are replayed in order into a new conversation on the
-chosen model, so /admin > Analytics can set the two side by side: speed,
-tokens, cost and the decisions taken (tools called, rules fired, outcome).
+chosen model and classifier, so /admin > Analytics can set the two side by
+side: speed, tokens, cost, the classifier's code and confidence, and the
+decisions taken (tools called, rules fired, outcome). The classifier defaults
+to the one the original used, so changing only the model (or only the
+classifier) isolates its effect.
 
 - The logs hold only masked text (D6), so that is what is replayed. Each
   mask tag gets a fixed stand-in (STAND_INS) so the model sees well-formed
@@ -15,7 +18,7 @@ tokens, cost and the decisions taken (tools called, rules fired, outcome).
   original conversation started. Status lookups, the knowledge base,
   config and the event log are the live ones.
 - The new conversation starts with a "rerun" event, {"of": original id,
-  "model": label}. Analytics leaves re-runs out of usage and cost.
+  "model": label, "classifier": setup}. Analytics leaves re-runs out of usage and cost.
 
 Runs happen in a background thread; the admin page polls the job. An
 OpenRouter key lives only in that job's selection while it runs.
@@ -32,6 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from src.agent import orchestrator
+from src.models import classifier as clf
 from src.models.llm import LLMSelection
 from src.tools import store as store_mod
 
@@ -79,6 +83,7 @@ class Job:
     original: str
     model: str
     turns: int
+    classifier: str = clf.DEFAULT_SETUP
     job_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     status: str = "running"      # running | done | failed
     done: int = 0
@@ -88,8 +93,8 @@ class Job:
     thread: threading.Thread | None = field(default=None, repr=False)
 
     def public(self) -> dict:
-        return {k: getattr(self, k) for k in ("job_id", "original", "model", "turns", "status", "done",
-                                              "rerun_id", "error", "started_at")}
+        return {k: getattr(self, k) for k in ("job_id", "original", "model", "classifier", "turns", "status",
+                                              "done", "rerun_id", "error", "started_at")}
 
 
 _JOBS: dict[str, Job] = {}
@@ -110,8 +115,15 @@ def root_of(events: list[dict], interaction_id: str) -> str:
     return interaction_id
 
 
-def start(interaction_id: str, sel: LLMSelection) -> Job:
+def classifier_of(events: list[dict]) -> str | None:
+    """The classifier setup a logged conversation used (None before classifiers were logged)."""
+    return next((e.get("model") for e in events if e["step"] == "classifier" and e.get("model")), None)
+
+
+def start(interaction_id: str, sel: LLMSelection, classifier: str | None = None) -> Job:
     sel.validate()
+    if classifier:
+        clf.check(classifier)
     if sum(j.status == "running" for j in _JOBS.values()) >= MAX_RUNNING:
         raise RerunError(f"{MAX_RUNNING} re-runs are already running; try again when one finishes")
     base = store_mod.get_store()
@@ -122,7 +134,9 @@ def start(interaction_id: str, sel: LLMSelection) -> Job:
     messages = [unmask(e.get("text")) for e in events if e["step"] == "input_screen"]
     if not messages:
         raise RerunError("this conversation has no resident messages to replay")
-    job = Job(original=original, model=sel.label, turns=len(messages))
+    used = classifier_of(events)
+    classifier = classifier or (used if used and clf.status(used)[0] else clf.check(None))
+    job = Job(original=original, model=sel.label, turns=len(messages), classifier=classifier)
     for old in sorted(_JOBS.values(), key=lambda j: j.started_at)[:-49]:
         _JOBS.pop(old.job_id, None)
     _JOBS[job.job_id] = job
@@ -138,9 +152,9 @@ def _run(job: Job, messages: list[str], sel: LLMSelection, store) -> None:
         session = orchestrator.get_session(None)
         job.rerun_id = session.interaction_id
         orchestrator.log_event(session, "rerun", model=sel.label,
-                               text=json.dumps({"of": job.original, "model": sel.label}))
+                               text=json.dumps({"of": job.original, "model": sel.label, "classifier": job.classifier}))
         for text in messages:
-            orchestrator.handle_turn(session.interaction_id, text, sel)
+            orchestrator.handle_turn(session.interaction_id, text, sel, classifier=job.classifier)
             job.done += 1
         job.status = "done"
     except orchestrator.SetupError as e:

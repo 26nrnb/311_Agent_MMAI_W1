@@ -21,6 +21,8 @@ from typing import Any, Callable
 from src.agent.rules import unsure_reason
 from src.config import config_cache, flow_config, guardrails_config, policy
 from src.guardrails import output_check
+from src.guardrails.input_screen import screen_args
+from src.guardrails.location import location_usable
 
 MAX_NODES_PER_RUN = 60   # cycle guard; validate() also rejects cycles
 
@@ -62,6 +64,10 @@ class Ctx:
              "missing": ", ".join(res.get("missing") or []),
              "ticket_ids": ", ".join(t["ticket_id"] for t in res.get("tickets") or []),
              "code": (self.args or {}).get("code") or res.get("code") or st.code or ""}
+        # {unit} and {category} for approved wording at any hook (e.g. the reply tree)
+        entry = policy()["service_catalogue"].get(v["code"]) or {}
+        v.setdefault("unit", entry.get("unit") or "City")
+        v.setdefault("category", entry.get("category") or "")
         return v
 
 
@@ -166,15 +172,73 @@ def _reply_claims_ticket(ctx):
     return bool(phrase), f'says "{phrase}" but no ticket was created' if phrase else "no creation claim"
 
 
-def _reply_commitment(ctx):
+def _reply_commitment(ctx, rule=None):
     phrase = output_check.commitment_phrase(ctx.reply or "")
-    return bool(phrase), f'"{phrase}"' if phrase else "no commitment phrases"
+    if not phrase:
+        return False, "no commitment phrases"
+    got = output_check.commitment_rule(ctx.reply or "")
+    wanted = {r.strip() for r in str(rule).split(",") if r.strip()} if rule else None
+    return (wanted is None or got in wanted), f'"{phrase}" ({got})'
 
 
 def _reply_too_long(ctx, max_words=None):
     limit = int(max_words or policy()["thresholds"]["max_reply_words"])
     n = len((ctx.reply or "").split())
     return n > limit, f"{n} words (limit {limit})"
+
+
+
+# ---- before create_ticket (W1: S5, A12, E2, A10, A11) ----
+
+def _args_flag(ctx, flag):
+    """S5: an input-screen list matched the tool's arguments (fields), not only the message."""
+    hit = screen_args(ctx.args).matches.get(flag)
+    return bool(hit), f"matched /{hit}/ in the tool's arguments" if hit else f"no {flag} pattern in the arguments"
+
+
+def _status_check_pending(ctx):
+    """A12: a message gave a ticket number or asked for a status, and no later message said it is new."""
+    st = ctx.state
+    if not st.status_signal:
+        return False, "no ticket number or status question"
+    if st.new_report:
+        return False, "resident said it is a new report"
+    return True, "ticket number or status question, not confirmed as a new report"
+
+
+def _draft_fields(ctx) -> dict:
+    """The fields so far: earlier create_ticket attempts plus this call's (a fired trigger is kept, E2)."""
+    return {**(ctx.state.fields or {}), **((ctx.args or {}).get("fields") or {})}
+
+
+def _trigger_value(ctx):
+    """E2: a field holds a value that policy.yaml reserves for one of the code's escalation triggers."""
+    code = str((ctx.args or {}).get("code") or ctx.state.code or "").strip().upper()
+    entry = policy()["service_catalogue"].get(code) or {}
+    fields = _draft_fields(ctx)
+    for trig in entry.get("escalation_triggers") or []:
+        for name, values in (trig.get("values") or {}).items():
+            if str(fields.get(name, "")).strip().lower() in {str(v).strip().lower() for v in values}:
+                return True, f"{code}/{trig['id']} ({name} = {fields.get(name)})"
+    return False, "no reserved trigger value in the fields"
+
+
+def _location_usable(ctx):
+    """A11: the draft's location is a street address, an intersection or a landmark on a street."""
+    loc = _draft_fields(ctx).get("location")
+    if not loc:
+        return False, "no location yet"
+    ok = location_usable(loc)
+    return ok, f'"{loc}" is {"usable" if ok else "too vague"}'
+
+
+def _not_searched(ctx):
+    """A10: search_tickets has not run for this code (or with no code) in this conversation."""
+    code = str((ctx.args or {}).get("code") or ctx.state.code or "").strip().upper()
+    done = ctx.state.searched
+    if code in done or "*" in done:
+        return False, f"searched for {code or 'any code'}"
+    return True, f"no search for {code or 'this code'} yet"
 
 
 def _always(ctx):
@@ -197,8 +261,17 @@ CHECKS: dict[str, tuple[str, dict, list[str] | None, Callable]] = {
     "reply_has_rule_ids": ("Reply contains policy rule IDs", {}, ["reply"], _reply_has_rule_ids),
     "reply_invented_id": ("Reply quotes an ID no tool returned", {}, ["reply"], _reply_invented_id),
     "reply_claims_ticket": ("Reply claims a ticket that wasn't created", {}, ["reply"], _reply_claims_ticket),
-    "reply_commitment": ("Reply makes a commitment (date, priority, refund)", {}, ["reply"], _reply_commitment),
+    "reply_commitment": ("Reply makes a commitment (date, priority, fine, refund, visit)",
+                         {"rule": "optional: only this rule, e.g. C7 (or a list: C2, C3)"}, ["reply"], _reply_commitment),
     "reply_too_long": ("Reply longer than max_reply_words", {"max_words": "number (default: thresholds)"}, ["reply"], _reply_too_long),
+    "args_flag": ("Input screen pattern matched the tool's arguments (S5)", {"flag": "guardrails.yaml input_screen list"},
+                  [f"before_{t}" for t in TOOL_HOOKS], _args_flag),
+    "status_check_pending": ("About an existing request, not confirmed as new (A12)", {}, ["before_create_ticket"],
+                             _status_check_pending),
+    "trigger_value": ("A field holds a value reserved for an escalation trigger (E2)", {}, ["before_create_ticket"],
+                      _trigger_value),
+    "location_usable": ("The draft's location is usable (A11)", {}, ["before_create_ticket"], _location_usable),
+    "not_searched": ("search_tickets not run for this code yet (A10)", {}, ["before_create_ticket"], _not_searched),
     "always": ("Always yes", {}, None, _always),
 }
 
@@ -339,7 +412,7 @@ def validate(doc: Any, pol: dict | None = None, guards: dict | None = None) -> l
         if "check" in n:
             if n["check"] not in CHECKS:
                 errors.append(f"{where}: unknown check {n['check']!r}")
-            elif n["check"] == "screen_flag" and params.get("flag") not in flags:
+            elif n["check"] in ("screen_flag", "args_flag") and params.get("flag") not in flags:
                 errors.append(f"{where}: flag must be one of the input_screen lists ({', '.join(sorted(flags))})")
         else:
             a = n["action"]
