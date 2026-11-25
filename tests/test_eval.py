@@ -233,6 +233,30 @@ def test_reproduce_skips_csvs_that_are_not_results_files(tmp_path):
     assert harness.reproduce(results) == 0 and (results / "summary.md").exists()
 
 
+def test_replay_needs_no_classifier_installed(tmp_path, monkeypatch):
+    """make reproduce on a machine without the fine-tuned weights or torch: every classifier
+    answer comes from the cache, so the classifier is never loaded."""
+    from src.eval import setups
+    tests = _write_cases(tmp_path / "cases.jsonl", _case())
+    out = harness.run("classify", "keyword_stub", str(tests), "heldout", results_dir=tmp_path / "r", quiet=True)
+    before = out.read_bytes()
+
+    def not_installed(name):
+        raise RuntimeError(f"classifier {name!r} can't be used: weights not installed")
+    monkeypatch.setattr(setups, "classifier", not_installed)
+    harness.run("classify", "keyword_stub", str(tests), "heldout", mode="replay", run_id=out.stem,
+                results_dir=tmp_path / "r", quiet=True)
+    assert out.read_bytes() == before
+    with pytest.raises(RuntimeError, match="weights not installed"):   # a live run still needs it
+        harness.run("classify", "keyword_stub", str(tests), "heldout", results_dir=tmp_path / "r2", quiet=True)
+
+
+def test_official_agent_setup_uses_distilroberta():
+    from src.eval import setups
+    s = setups.setup("agent", "haiku_distilroberta")
+    assert s["classifier"] == "distilroberta_lora" and s["model"] == setups.setup("agent", "haiku")["model"]
+
+
 def test_ticket_fixtures_load_from_json(tmp_path):
     rows, source = harness.load_tickets(str(harness.ROOT / "data" / "demo" / "demo_tickets.json"))
     assert source == "demo_tickets.json" and rows[0]["ticket_id"] == "311-2026-100140"

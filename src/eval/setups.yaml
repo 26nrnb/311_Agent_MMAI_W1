@@ -57,6 +57,14 @@ agent:
     model: anthropic/claude-sonnet-5.5
     key_env: OPENROUTER_API_KEY
     classifier: keyword_stub
+  # The official agent setup (F, Nov 23): Haiku with the fine-tuned DistilRoBERTa classifier,
+  # as on the live site. A live run needs its weights in src/models/fine_tuning/distilroberta and
+  # requirements-ml.txt installed; a replay (make reproduce) needs neither.
+  haiku_distilroberta:
+    provider: openrouter
+    model: anthropic/claude-haiku-5.5
+    key_env: OPENROUTER_API_KEY
+    classifier: distilroberta_lora
 
 # LLM judge setups (metrics.md section 5). The rubric is a prompt file in the
 # Supabase config (prompts/judge/...), owned by F.
