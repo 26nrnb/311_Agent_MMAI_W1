@@ -1,0 +1,24 @@
+{
+  "run_id": "2026-11-24_modernbert_lora_heldout_3a522a",
+  "kind": "classify",
+  "setup": "modernbert_lora",
+  "setup_settings": {
+    "kind": "hf",
+    "label": "ModernBERT-base (fine-tuned)",
+    "weights": "src/models/fine_tuning/ModernBERT-base",
+    "max_length": 512,
+    "temperature": 1.0
+  },
+  "test_set": "heldout",
+  "test_file": "data/test/test_heldout.jsonl",
+  "test_set_hash": "3a522a9897b3236903a36f32b92bfd1fc8fe9a96cebfea0a1f5cf5c4b6bfb932",
+  "n_cases": 774,
+  "limit": null,
+  "test_set_lock": "matches LOCK.md (774 cases)",
+  "tickets_path": null,
+  "created": "2026-11-24",
+  "git_commit": "da40bf6",
+  "harness_version": "2.1",
+  "frozen_clock": "2026-11-11T12:00:00+00:00",
+  "classifier": "modernbert_lora"
+}
