@@ -174,6 +174,37 @@ def test_model_handoff_tool_returns_reference(llm, sel, fresh_store):
     assert out["rule_id"] == "E2" and fresh_store.handoffs[0]["ref_id"] in out["reply"]
 
 
+def _handoff_trigger(store):
+    import json
+    ev = [e for e in store.events if e["step"] == "tool:handoff"]
+    return json.loads(ev[-1]["text"]).get("trigger_id")
+
+
+def test_e2_model_handoff_logs_the_trigger_it_names(llm, sel, fresh_store):
+    from src.eval.harness import agent_trigger
+    llm([tool_call("policy_lookup", {"code": "RD-POT"})],
+        [tool_call("handoff", {"rule_id": "E2", "reason": "blocks the hospital entrance",
+                               "trigger_id": "hospital_route"})])
+    handle_turn(None, "A huge pothole is blocking the hospital entrance on King St", sel)
+    assert _handoff_trigger(fresh_store) == "RD-POT/hospital_route"
+    assert agent_trigger(fresh_store.handoffs, fresh_store.events) == "hospital_route"
+
+
+def test_e2_unknown_trigger_is_not_logged(llm, sel, fresh_store):
+    llm([tool_call("policy_lookup", {"code": "RD-POT"})],
+        [tool_call("handoff", {"rule_id": "E2", "reason": "big", "trigger_id": "made_up"})])
+    handle_turn(None, "A huge pothole on King St", sel)
+    assert _handoff_trigger(fresh_store) is None
+
+
+def test_e2_reserved_value_logs_its_trigger(llm, sel, fresh_store):
+    llm([tool_call("policy_lookup", {"code": "AN-INJ"})],
+        [tool_call("search_tickets", {"location": "45 Elm Street", "code": "AN-INJ"})],
+        [tool_call("create_ticket", {"code": "AN-INJ", "fields": INJ_FIELDS})])
+    handle_turn(None, "There's a limping dog at 45 Elm Street", sel)
+    assert _handoff_trigger(fresh_store) == "AN-INJ/dog_or_cat"
+
+
 def test_conversation_continues_with_same_interaction(llm, sel):
     llm("Which bin type is it?", "Thanks.")
     first = handle_turn(None, "my bin is broken", sel)
@@ -359,3 +390,30 @@ def test_m1_intro_follows_the_911_text(llm, sel, fresh_store):
     llm()
     out = handle_turn(None, "There's a strong smell of gas in my building", sel)
     assert out["reply"].startswith("This sounds like an emergency.") and out["reply"].endswith(INTRO.strip())
+
+
+# ---------------------------------------------------------------- M6: the model spots another language
+
+def test_m6_non_english_hands_off_in_english(llm, sel, fresh_store):
+    llm([tool_call("handoff", {"rule_id": "M6", "reason": "message in French"})])
+    out = handle_turn(None, "Bonjour, le couvercle de mon bac de recyclage est fissuré. 12 rue Oak.", sel)
+    ref = fresh_store.handoffs[0]["ref_id"]
+    assert out["reply"] == (INTRO + "I can only help in English for now. "
+                            f"I've passed this to a 311 staff member to review. Your reference is {ref}.")
+    assert out["rule_id"] == "M6" and fresh_store.tickets == []
+    assert _outcomes(fresh_store) == ["handoff_language"]
+    from src.eval.outcome import ENGLISH_ONLY
+    assert ENGLISH_ONLY.search(out["reply"])   # the eval's own rule reads it the same way
+
+
+def test_m6_emergency_in_another_language_keeps_911(llm, sel, fresh_store):
+    llm([tool_call("handoff", {"rule_id": "E1", "reason": "gas smell, in French"})])
+    out = handle_turn(None, "Il y a une forte odeur de gaz dans mon immeuble", sel)
+    assert out["reply"].startswith("This sounds like an emergency. Please call 911 now.")
+    assert _outcomes(fresh_store) == ["redirect_911"]
+
+
+def test_handoff_tool_accepts_m6():
+    from src.tools.registry import tool_schemas
+    schema = next(t for t in tool_schemas() if t["function"]["name"] == "handoff")
+    assert "M6" in schema["function"]["parameters"]["properties"]["rule_id"]["enum"]

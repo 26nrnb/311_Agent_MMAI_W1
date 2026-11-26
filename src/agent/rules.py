@@ -29,6 +29,7 @@ class RuleState:
     possible_duplicates: list[dict] = field(default_factory=list)
     # for the outcome (src/agent/outcome.py)
     handoff_rule: str | None = None
+    trigger_id: str | None = None                           # E2 trigger that applies, as CODE/id (policy v1.0)
     status_found: bool = False                              # get_status found the ticket (A12)
     kb_answered: bool = False                               # kb_search returned an article (A13)
     linked_id: str | None = None                            # open ticket a reply named (C6)

@@ -289,7 +289,7 @@ def _trigger_only(value) -> str | None:
 
 def agent_trigger(handoffs: list[dict], events: list[dict]) -> str | None:
     """The E2 trigger the agent logged, if it logged one, as the record writes it (no code prefix).
-    The agent records only a rule ID and a reason today (open item for D), so this reads a
+    The agent logs it as `trigger_id` in the tool:handoff event's JSON; this reads a
     `trigger_id` wherever it may land (the handoff row, an event row, a tool:handoff or flow
     event's JSON), or a CODE/trigger_id pair in a handoff reason or event text (policy v1.0)."""
     found = None
