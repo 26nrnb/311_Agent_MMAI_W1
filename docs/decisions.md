@@ -186,3 +186,8 @@ alternatives, and why. The report draws on this file directly.
 * **Why:** testing after PR #15 found Haiku's refusal and M1 line, sent with its first tool call, never reached the resident; the model skipped M1 in five of six first replies; and the prompt-injection case logged `create_ticket` though the policy outcome is `refuse_and_continue`.
 * **Known limit:** a model that narrates each step ("Let me check that.") now shows those lines too, and they count toward M7's word limit.
 
+## D-030 M6: the model detects another language and hands off (2026-11-25)
+
+* **Chose:** the model, not code, decides a message isn't in English. The prompt lists M6 among the handoff rules, and the `handoff` tool's `rule_id` now allows M6. An M6 handoff's reply opens with the new wording `english_only` ("I can only help in English for now.", policy.yaml v1.0.5) before the handoff wording, so the logged outcome is `handoff_language` and the eval's English-only pattern reads it the same way. An emergency in any language is a handoff under E1, whose reply now opens with the 911 wording (outcome `redirect_911`); a hazard is E2 (`escalate_human`).
+* **Why:** testing found non-English requests were taken in English. M6 was enforced by "prompt", but the prompt only said to reply in English, and the tool didn't accept M6, so nothing could reach `handoff_language`. The team chose the LLM over a language-detection library.
+* **Known limit:** detection depends on the model; a small model may still carry on in English. The input screen's E1 patterns are English, so a non-English emergency relies on the model calling E1.

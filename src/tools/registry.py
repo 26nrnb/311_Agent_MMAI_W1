@@ -40,8 +40,10 @@ def tool_schemas() -> list[dict]:
         _fn("get_status", "Status of the resident's own ticket. Needs the ticket number and the postal code on it.",
             {"ticket_id": {"type": "string"}, "postal_code": {"type": "string"}}, ["ticket_id", "postal_code"]),
         _fn("handoff", "Pass the request to a 311 staff member (or log a 911 redirect). Use the policy rule ID that applies.",
-            {"rule_id": {"type": "string", "enum": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10"]},
-             "reason": {"type": "string", "description": "One sentence on why"}}, ["rule_id", "reason"]),
+            {"rule_id": {"type": "string", "enum": ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "M6"]},
+             "reason": {"type": "string", "description": "One sentence on why"},
+             "trigger_id": {"type": "string", "description": "For E2: the id of the escalation trigger from "
+                            "policy_lookup that applies (for example hospital_route)"}}, ["rule_id", "reason"]),
         _fn("kb_search", "Search the City knowledge base for facts about services, schedules and rules. Only state facts this returns.",
             {"query": {"type": "string"}}, ["query"]),
     ]

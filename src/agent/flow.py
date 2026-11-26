@@ -219,6 +219,7 @@ def _trigger_value(ctx):
     for trig in entry.get("escalation_triggers") or []:
         for name, values in (trig.get("values") or {}).items():
             if str(fields.get(name, "")).strip().lower() in {str(v).strip().lower() for v in values}:
+                ctx.state.trigger_id = f"{code}/{trig['id']}"   # logged with the handoff (E2)
                 return True, f"{code}/{trig['id']} ({name} = {fields.get(name)})"
     return False, "no reserved trigger value in the fields"
 

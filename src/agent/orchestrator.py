@@ -123,8 +123,11 @@ def _do_handoff(session: Session, rule_id: str, reason: str) -> str:
         "fields": st.fields, "transcript": session.transcript,
         "possible_duplicates": st.possible_duplicates, "reason": reason,
     })
+    event = {"reason": reason, "result": result}
+    if rule_id == "E2" and st.trigger_id:   # the E2 trigger that fired, as CODE/id (policy v1.0)
+        event["trigger_id"] = st.trigger_id
     log_event(session, "tool:handoff", rule_id=rule_id, outcome="ok" if result["ok"] else "error",
-              text=json.dumps({"reason": reason, "result": result}))
+              text=json.dumps(event))
     st.handed_off = True
     st.handoff_rule = rule_id
     if not result["ok"]:
@@ -204,6 +207,18 @@ def _chat_with_retry(session: Session, sel: LLMSelection):
     return None
 
 
+def _known_trigger(code: str | None, value) -> str | None:
+    """The model's trigger_id as CODE/id, if it names one of the code's escalation triggers (E2).
+    Anything else is dropped, so the log never records a trigger the policy doesn't have."""
+    if not value:
+        return None
+    tid = str(value).split("/", 1)[-1].strip().lower()
+    code = str(code or (str(value).split("/", 1)[0] if "/" in str(value) else "")).strip().upper()
+    entry = policy()["service_catalogue"].get(code) or {}
+    ids = {str(t.get("id")).lower() for t in entry.get("escalation_triggers") or []}
+    return f"{code}/{tid}" if tid in ids else None
+
+
 def _run_tool(session: Session, name: str, args: dict) -> tuple[dict, flow.Outcome | None]:
     """Returns (result for the model, an outcome that ends the turn or None)."""
     st = session.state
@@ -214,8 +229,12 @@ def _run_tool(session: Session, name: str, args: dict) -> tuple[dict, flow.Outco
         return fail("bad_arguments", f"no such tool {name!r} (A9)"), None
     if name == "handoff":   # the model decided a person must review this (A6)
         rule = args.get("rule_id") or "M4"
+        st.trigger_id = _known_trigger(st.code, args.get("trigger_id")) or st.trigger_id
+        # E1: the 911 text comes first; M6: say why in English. Skipped if the policy lacks the wording.
+        prefix = {"E1": "emergency", "M6": "english_only"}.get(rule)
         return ok(note="handled"), flow.Outcome(
-            "handoff", rule, reason=args.get("reason") or rule, handoff_rule=rule)
+            "handoff", rule, reason=args.get("reason") or rule, handoff_rule=rule,
+            prefix=prefix if prefix in policy()["wording"] else None)
 
     ctx = flow.Ctx(state=st, tool=name, args=args)
     before = _run_flow(session, f"before_{name}", ctx)
