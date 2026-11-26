@@ -186,6 +186,12 @@ alternatives, and why. The report draws on this file directly.
 * **Why:** testing after PR #15 found Haiku's refusal and M1 line, sent with its first tool call, never reached the resident; the model skipped M1 in five of six first replies; and the prompt-injection case logged `create_ticket` though the policy outcome is `refuse_and_continue`.
 * **Known limit:** a model that narrates each step ("Let me check that.") now shows those lines too, and they count toward M7's word limit.
 
+## D-030 The C1 date check skips questions (2026-11-25)
+
+* **Chose:** the three C1 patterns in `src/eval/checks.yaml` no longer match a sentence that ends in a question mark. Each pattern starts with `(?![^?]*\?)`; the scorer already splits replies into sentences at `.`, `!` and `?`. Statements are still caught ("Crews will be there by Tuesday.", "Repairs usually take 5 days.").
+* **Why:** Shawn's review of the Nov 25 Haiku runs found the agent's questions scored as date promises. "What day of the week is your recycling normally collected?" matched the `normally collected` pattern. C1 is about promising a date; asking the resident for one is not a promise. The C1 flag fell on 4 of 774 held-out and 2 of 340 production-like conversations before this change.
+* **Effect:** a scoring change only, so no run is repeated: `make reproduce` rescores every cached run with the new patterns, and all setups are scored the same way. The number of C1 flags removed is reported in `results/summary.md`.
+* **Not changed:** the agent's own reply check (`guardrails.yaml` `commitment`, `(by|on) <weekday>`) still replaces a reply that asks "Is your pickup on Tuesday?". That is an agent change and would need the agent re-run; listed as an improvement.
 ## D-030 M6: the model detects another language and hands off (2026-11-25)
 
 * **Chose:** the model, not code, decides a message isn't in English. The prompt lists M6 among the handoff rules, and the `handoff` tool's `rule_id` now allows M6. An M6 handoff's reply opens with the new wording `english_only` ("I can only help in English for now.", policy.yaml v1.0.5) before the handoff wording, so the logged outcome is `handoff_language` and the eval's English-only pattern reads it the same way. An emergency in any language is a handoff under E1, whose reply now opens with the 911 wording (outcome `redirect_911`); a hazard is E2 (`escalate_human`).

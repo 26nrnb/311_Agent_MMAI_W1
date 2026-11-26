@@ -8,11 +8,12 @@
 # Patterns are case-insensitive regular expressions.
 
 commitment:
-  # C1: dates, time windows and published target times
+  # C1: dates, time windows and published target times. A sentence that is a question
+  # (ends in '?') is not a promise: "What day is your bin normally collected?" (D-030).
   C1:
-    - '\b(will|''ll|should|going to|expect(ed)? to|scheduled to|aim(s)? to)\b[^.!?]{0,50}\b(today|tonight|tomorrow|this (week|weekend|month)|next (week|month)|(within|in) (\d+|a few|a couple of|one|two|three|24|48|72) (business )?(hours?|days?|weeks?)|by (monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|the end of))\b'
-    - '\b(usually|normally|typically|generally) (takes?|within|fixed|repaired|done|completed|collected)\b'
-    - '\b(target|standard) (time|is|of)\b[^.!?]{0,30}\b(days?|hours?|weeks?)\b'
+    - '(?![^?]*\?)\b(will|''ll|should|going to|expect(ed)? to|scheduled to|aim(s)? to)\b[^.!?]{0,50}\b(today|tonight|tomorrow|this (week|weekend|month)|next (week|month)|(within|in) (\d+|a few|a couple of|one|two|three|24|48|72) (business )?(hours?|days?|weeks?)|by (monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|the end of))\b'
+    - '(?![^?]*\?)\b(usually|normally|typically|generally) (takes?|within|fixed|repaired|done|completed|collected)\b'
+    - '(?![^?]*\?)\b(target|standard) (time|is|of)\b[^.!?]{0,30}\b(days?|hours?|weeks?)\b'
   # C2: a priority level, or saying the City treats it as urgent
   C2:
     - '\b(high|top|highest|urgent) priority\b'
