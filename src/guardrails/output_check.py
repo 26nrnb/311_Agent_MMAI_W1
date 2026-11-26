@@ -69,6 +69,20 @@ def claim_phrase(reply: str) -> str | None:
     return m.group(0) if m else None
 
 
+@config_cache
+def _handoff_claim():
+    pattern = guardrails_config()["output_check"].get("handoff_claim")   # absent in older configs
+    return re.compile(pattern, re.IGNORECASE) if pattern else None
+
+
+def handoff_claim_phrase(reply: str) -> str | None:
+    """M3 [hard]: text claiming the request was passed to a person, or giving a reference
+    (checked when no handoff was made)."""
+    pattern = _handoff_claim()
+    m = pattern.search(reply) if pattern else None
+    return m.group(0) if m else None
+
+
 def commitment_phrase(reply: str) -> str | None:
     """C1/C2/C3/C4/C7: the first commitment phrase in the reply."""
     for p in _patterns()[0]:

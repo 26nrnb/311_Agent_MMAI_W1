@@ -417,3 +417,41 @@ def test_handoff_tool_accepts_m6():
     from src.tools.registry import tool_schemas
     schema = next(t for t in tool_schemas() if t["function"]["name"] == "handoff")
     assert "M6" in schema["function"]["parameters"]["properties"]["rule_id"]["enum"]
+
+
+# ---------------------------------------------------------------- M3: a handoff claimed with none made
+
+def test_reply_claiming_a_handoff_makes_it_real(llm, sel, fresh_store):
+    llm("I've passed this to a 311 staff member to review. Your reference is E3.")
+    out = handle_turn(None, "The thing on my street is broken", sel)
+    ref = fresh_store.handoffs[0]["ref_id"]
+    assert fresh_store.handoffs[0]["rule_id"] == "E9" and out["rule_id"] == "M3"
+    assert out["reply"].endswith(f"Your reference is {ref}.") and "E3." not in out["reply"]
+
+
+def test_claimed_handoff_with_911_keeps_the_emergency_text(llm, sel, fresh_store):
+    # qwen3:4b on a French gas smell: its own 911 text plus a handoff it never made
+    llm("This sounds like a potential emergency. Please call 911 immediately. "
+        "I've passed this to a 311 staff member to review. Your reference is E1.")
+    out = handle_turn(None, "Il y a une forte odeur de gaz dans mon immeuble au 30 rue Pine.", sel)
+    assert out["reply"].startswith("This sounds like an emergency. Please call 911 now.")
+    assert fresh_store.handoffs[0]["rule_id"] == "E1" and _outcomes(fresh_store) == ["redirect_911"]
+
+
+def test_ticket_wording_is_not_a_handoff_claim(llm, sel, fresh_store):
+    from src.config import policy
+    llm([tool_call("policy_lookup", {"code": "SW-BIN"})],
+        [tool_call("search_tickets", {"location": "12 Oak Street", "code": "SW-BIN"})],
+        [tool_call("create_ticket", {"code": "SW-BIN", "fields": BIN_FIELDS})],
+        policy()["wording"]["ticket_created"].format(ticket_id=f"311-{fresh_store_year()}-500001",
+                                                     category="Damaged or missing bin",
+                                                     location="12 Oak Street", unit="Solid Waste"))
+    handle_turn(None, "My recycling bin lid at 12 Oak Street G1A 1A1 is cracked", sel)
+    assert fresh_store.handoffs == [] and _outcomes(fresh_store) == ["create_ticket"]
+
+
+def test_e3_guidance_points_non_english_to_m6(llm, sel, fresh_store):
+    fake = llm("Could you tell me more?")
+    handle_turn(None, "Il y a un problème", sel)   # the keyword stub finds no code: E3 guidance
+    note = fake.calls[0][-1]["content"]
+    assert "ONE clarifying question" in note and "M6" in note

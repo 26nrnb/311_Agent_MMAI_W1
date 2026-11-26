@@ -9,7 +9,7 @@
 # enabled: false skips a node (a decision then takes its "no" branch).
 # The checks and actions available are listed in /admin; adding a new kind
 # needs code in src/agent/flow.py.
-version: 1.3   # 1.2: E3 unsure_again on | 1.3: S5, A12, E2, A10 checks before create_ticket (A11 in the tool)
+version: 1.4   # 1.2: E3 unsure_again on | 1.3: S5, A12, E2, A10 checks before create_ticket (A11 in the tool) | 1.4: M6 before E3's question; M3 handoff claims
 
 hooks:
   message: redacted              # a resident message arrives, before the model sees it
@@ -116,7 +116,7 @@ nodes:
     title: Ask one clarifying question
     rule: E3
     action: guide
-    params: {say: "The classifier is unsure ({observed}). Ask the resident ONE clarifying question before going on (E3, M2)."}
+    params: {say: "The classifier is unsure ({observed}). Ask the resident ONE clarifying question before going on (E3, M2). If the message isn't in English, don't ask: hand off under M6 (E1 for an emergency, E2 for a hazard)."}
 
   # ------------------------------------------------ duplicates (A3, C6, D3, D4)
   duplicates_found:
@@ -324,12 +324,35 @@ nodes:
     rule: M3
     check: reply_claims_ticket
     yes: claim_handoff
-    no: commitment
+    no: claims_handoff
   claim_handoff:
     title: Block the reply and hand off
     rule: M3
     action: handoff
     params: {handoff_rule: E9, reason: reply claimed a ticket no tool created}
+  claims_handoff:
+    title: Claims it was passed to staff when no handoff was made?
+    description: Makes the claim true instead of leaving the resident waiting on a review nobody will do.
+    rule: M3
+    check: reply_claims_handoff
+    yes: claim_says_911
+    no: commitment
+  claim_says_911:
+    title: Did that reply tell the resident to call 911?
+    rule: E1
+    check: reply_says_911
+    yes: claim_911_handoff
+    no: claim_staff_handoff
+  claim_911_handoff:
+    title: Give the 911 wording and hand off
+    rule: E1
+    action: handoff
+    params: {prefix: emergency, handoff_rule: E1, reason: reply told the resident to call 911 and claimed a handoff no tool made}
+  claim_staff_handoff:
+    title: Hand off, as the reply claimed
+    rule: M3
+    action: handoff
+    params: {handoff_rule: E9, reason: reply claimed a handoff no tool made}
   # Policy v1.0: a reply that breaks C1 to C4 or C7 is replaced with the approved wording,
   # not only logged (S3: the wording under C1 to C4). Checked visit first: "will visit
   # tomorrow" gets the visit wording.

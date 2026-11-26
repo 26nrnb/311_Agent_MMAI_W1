@@ -14,6 +14,7 @@ ACTIONS); the tree decides how they are wired.
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -172,6 +173,23 @@ def _reply_claims_ticket(ctx):
     return bool(phrase), f'says "{phrase}" but no ticket was created' if phrase else "no creation claim"
 
 
+def _reply_claims_handoff(ctx):
+    if ctx.state.handed_off:
+        return False, f"handed off ({ctx.state.handoff_rule})"
+    if ctx.state.ticket_ids:   # the ticket is the reference; its wording says staff will review it
+        return False, "a ticket was created"
+    phrase = output_check.handoff_claim_phrase(ctx.reply or "")
+    return bool(phrase), f'says "{phrase}" but no handoff was made' if phrase else "no handoff claim"
+
+
+_SAYS_911 = re.compile(r"\b911\b")
+
+
+def _reply_says_911(ctx):
+    hit = bool(_SAYS_911.search(ctx.reply or ""))
+    return hit, "tells the resident to call 911" if hit else "no 911"
+
+
 def _reply_commitment(ctx, rule=None):
     phrase = output_check.commitment_phrase(ctx.reply or "")
     if not phrase:
@@ -262,6 +280,8 @@ CHECKS: dict[str, tuple[str, dict, list[str] | None, Callable]] = {
     "reply_has_rule_ids": ("Reply contains policy rule IDs", {}, ["reply"], _reply_has_rule_ids),
     "reply_invented_id": ("Reply quotes an ID no tool returned", {}, ["reply"], _reply_invented_id),
     "reply_claims_ticket": ("Reply claims a ticket that wasn't created", {}, ["reply"], _reply_claims_ticket),
+    "reply_claims_handoff": ("Reply claims a handoff that wasn't made", {}, ["reply"], _reply_claims_handoff),
+    "reply_says_911": ("Reply tells the resident to call 911", {}, ["reply"], _reply_says_911),
     "reply_commitment": ("Reply makes a commitment (date, priority, fine, refund, visit)",
                          {"rule": "optional: only this rule, e.g. C7 (or a list: C2, C3)"}, ["reply"], _reply_commitment),
     "reply_too_long": ("Reply longer than max_reply_words", {"max_words": "number (default: thresholds)"}, ["reply"], _reply_too_long),
