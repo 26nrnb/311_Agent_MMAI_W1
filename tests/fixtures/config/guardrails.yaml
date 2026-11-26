@@ -23,6 +23,8 @@
 #                 the agent's instructions; straight or curly apostrophe). New lists, each with a
 #                 flow.yaml step: data_request (S2), bulk_request (S4, tickets aimed at another
 #                 person), abuse (S7), hidden_instruction (S5, treated as text, NOT a refusal).
+#                 C1-C4/C7: output_check.commitment_negation; a refusal or a question is not a
+#                 commitment, so Check 3 no longer replaces "I can't offer a refund".
 # Note: the input screen turns each list name below into a flag. A new list does
 # nothing until a flow.yaml step checks it (check: screen_flag, params: {flag: <list name>}).
 
@@ -185,6 +187,11 @@ output_check:
     #   ("I can't say whether someone will visit" is the approved wording, so 'whether' / 'if' before the subject is allowed)
     - '(?<!whether )(?<!if )\b(?:someone|somebody|an? crew|crews|an? inspector|an? officer|an? technician|staff|they|we|the city|the team|the unit)(?: will|''ll| is going to| are going to| shall)\b[^.!?]{0,25}\b(?:visit|inspect|investigate|come (?:out|by)|stop by|look into (?:it|this))\b'
     - '\b(?:will|''ll|going to)\s+send\s+(?:someone|somebody|a crew|an inspector|an officer|staff|a technician)\b'
+  # v1.2 (NB-10): a commitment phrase in a negated clause is a refusal, not a promise
+  # ("I can't offer a refund", "I can't mark it top priority", "I can't confirm anyone will be
+  # fined"). Before v1.2 all 14 replies Check 3 replaced in the before-fix run were such refusals.
+  # A clause ends at . ! ? a line break, "but", "however" or ";". A question is never a commitment.
+  commitment_negation: '\b(?:can[’'']?t|cannot|can not|won[’'']?t|will not|not able|unable|don[’'']?t|do not|doesn[’'']?t|does not|isn[’'']?t|wasn[’'']?t|weren[’'']?t|didn[’'']?t|hasn[’'']?t|haven[’'']?t|no way to|never)\b'
   # M3 [hard]: any ticket ID in a reply must have been returned by a tool
   ticket_id: '\b311-\d{4}-\d{6}\b'
   # M3 [hard]: claiming a request was created when create_ticket returned no ID

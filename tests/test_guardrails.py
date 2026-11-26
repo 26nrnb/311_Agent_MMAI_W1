@@ -262,3 +262,29 @@ def test_s7_abuse():
 def test_v12_lists_leave_everyday_messages_alone(text):
     flags = set(screen(text).flags)
     assert not flags & {"injection", "data_request", "bulk_request", "abuse", "hidden_instruction"}, flags
+
+
+# ---- v1.2 (NB-10): Check 3 no longer replaces a refusal or a question (commitment_negation).
+# Written replies, not taken from the sealed set.
+@pytest.mark.parametrize("reply", [
+    "I can't offer a refund or compensation for the damage.",
+    "I'm not able to make promises about compensation.",
+    "I can't mark requests as top priority.",
+    "I can't confirm that anyone will be fined.",
+    "I can't change how the request is prioritized.",
+    "Your pickup wasn't collected on Friday, so I'll log it.",
+    "Was it supposed to be picked up on Monday?",
+])
+def test_c_rules_refusals_and_questions_are_not_commitments(reply):
+    assert output_check.commitment_rule(reply) is None
+
+
+@pytest.mark.parametrize("reply,rule", [
+    ("I can't say when, but a crew will visit tomorrow.", "C7"),   # "but" starts a new clause
+    ("You will get a refund.", "C4"),
+    ("This is top priority for us.", "C2"),
+    ("They will be fined.", "C3"),
+    ("I can't call you. It will be fixed by Friday.", "C1"),       # the refusal is another sentence
+])
+def test_c_rules_real_commitments_still_caught(reply, rule):
+    assert output_check.commitment_rule(reply) == rule

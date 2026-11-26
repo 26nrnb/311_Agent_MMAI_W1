@@ -6,7 +6,8 @@ M3 [hard]: a ticket ID or handoff reference that no tool returned in this
     conversation means the model invented it; the reply is blocked.
 C1/C2/C3/C4/C7 [hard, Policy v1.0]: commitment phrases (dates, priorities,
     fines, refunds, visits). commitment_rule() says which rule a phrase breaks;
-    the "reply" tree replaces the reply with the approved wording.
+    the "reply" tree replaces the reply with the approved wording. A phrase in a
+    refusal ("I can't offer a refund") or a question is not a commitment (NB-10).
 D8: policy rule IDs the model echoes from its prompt, such as "(M1)", are
     removed by strip_rule_ids() before the reply is checked or shown.
 """
@@ -83,13 +84,47 @@ def handoff_claim_phrase(reply: str) -> str | None:
     return m.group(0) if m else None
 
 
+@config_cache
+def _refusal_res():
+    """C1-C4, C7: a phrase in a refusal ("I can't offer a refund") or a question is not a
+    commitment. guardrails.yaml output_check.commitment_negation; absent = old behaviour."""
+    pat = guardrails_config()["output_check"].get("commitment_negation")
+    return re.compile(pat, re.IGNORECASE) if pat else None
+
+
+# A clause starts after a sentence end or a line break; "but" or ";" starts a new clause,
+# so "I can't say when, but a crew will visit tomorrow" is still a commitment.
+_SENTENCE_START = re.compile(r"[.!?\n]")
+_CLAUSE_BREAK = re.compile(r"\bbut\b|\bhowever\b|;", re.IGNORECASE)
+
+
+def _is_refused(reply: str, start: int, end: int) -> bool:
+    """True if the phrase at reply[start:end] sits in a negated clause or in a question."""
+    neg = _refusal_res()
+    if neg is None:
+        return False
+    before = reply[:start]
+    cut = max((m.end() for m in _SENTENCE_START.finditer(before)), default=0)
+    clause = before[cut:]
+    breaks = list(_CLAUSE_BREAK.finditer(clause))
+    if breaks:
+        clause = clause[breaks[-1].end():]
+    if neg.search(clause):
+        return True
+    rest = _SENTENCE_START.search(reply, end)   # D-030: a question promises nothing
+    return bool(rest) and rest.group(0) == "?"
+
+
+def _commitments(reply: str) -> list[str]:
+    """Every commitment phrase in the reply that is not refused or asked (see _is_refused)."""
+    return [m.group(0) for p in _patterns()[0] for m in p.finditer(reply or "")
+            if not _is_refused(reply, m.start(), m.end())]
+
+
 def commitment_phrase(reply: str) -> str | None:
     """C1/C2/C3/C4/C7: the first commitment phrase in the reply."""
-    for p in _patterns()[0]:
-        m = p.search(reply)
-        if m:
-            return m.group(0)
-    return None
+    found = _commitments(reply)
+    return found[0] if found else None
 
 
 # Which C rule a commitment phrase breaks, checked in this order (a phrase such as
@@ -106,7 +141,7 @@ def commitment_rule(reply: str) -> str | None:
     """The rule (C7, C4, C3, C2 or C1, in that order) that the reply's commitment
     phrases break; None if there are none. All phrases are looked at, so "a crew
     will come by tomorrow" is C7 even though "by tomorrow" (C1) matches first."""
-    phrases = " | ".join(m.group(0) for p in _patterns()[0] for m in p.finditer(reply))
+    phrases = " | ".join(_commitments(reply))
     if not phrases:
         return None
     return next((rule for rule, words in _RULE_WORDS if words.search(phrases)), "C1")
